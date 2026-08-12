@@ -4,7 +4,7 @@ An ESP32-S3 N16R8 clock for the Jaycar XC3728 128 x 64 OLED. It gets the
 current time from internet time servers, shows 12-hour time with seconds and
 AM/PM, and displays the percentage of the local day completed above the clock
 to three decimal places. Tapping the connected XC3732 sensor cycles between the
-clock, the next scheduled exam, and current Maroochydore weather.
+clock, the next scheduled exam, and current local weather.
 
 The firmware is configured for Brisbane time (`AEST-10`, UTC+10 with no daylight
 saving).
@@ -125,23 +125,29 @@ hours, when it switches to hours, minutes, and seconds. Once MATH1051 starts,
 the next exam screen automatically changes to ENGG1300. The schedule is stored
 in `kExams` near the top of `src/main.cpp`.
 
-The third screen shows the current weather for Maroochydore, Sunshine Coast:
+The third screen shows current weather for the privately configured location:
 
 ```text
 WEATHER                   WiFi
-          MAROOCHYDORE
+         LOCAL FORECAST
              24°C
         PARTLY CLOUDY
       L18 H27  RAIN 35%
 ```
 
 Weather data comes from [Open-Meteo](https://open-meteo.com/en/docs) and
-refreshes every five minutes. Current temperature and conditions are shown with
-the day's forecast minimum, maximum, and maximum precipitation probability. A
-failed refresh retains the last good reading; the screen displays `STALE` once
-that reading is more than 30 minutes old. While no reading is available, it
-displays `LOADING...` or `NO CONNECTION`. Failed initial requests retry every
-30 seconds.
+refreshes every five minutes. The location-specific API URL belongs in the
+ignored `include/secrets.h` as `WEATHER_API_URL`, keeping it out of tracked
+source and documentation. Use an `http://api.open-meteo.com/v1/forecast?...`
+URL containing `current=temperature_2m,weather_code` and the daily variables
+`temperature_2m_max,temperature_2m_min,precipitation_probability_max`.
+
+Current temperature and conditions are shown with the day's forecast minimum,
+maximum, and maximum precipitation probability. A failed refresh retains the
+last good reading; the screen displays `STALE` once that reading is more than
+30 minutes old. Before the first successful reading, request errors are shown
+on the display instead of leaving it on `LOADING...`. Failed requests retry
+every 30 seconds.
 
 Tap the connected XC3732 once to advance to the next screen. The firmware uses
 `INT1` for an immediate notification and also polls the latched pulse status

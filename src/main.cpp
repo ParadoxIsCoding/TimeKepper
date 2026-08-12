@@ -3,7 +3,6 @@
 #include <HTTPClient.h>
 #include <U8g2lib.h>
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
 #include <Wire.h>
 #include <ctype.h>
 #include <sys/time.h>
@@ -16,6 +15,10 @@
 #else
 #define WIFI_SSID ""
 #define WIFI_PASSWORD ""
+#endif
+
+#ifndef WEATHER_API_URL
+#define WEATHER_API_URL ""
 #endif
 
 namespace {
@@ -37,11 +40,6 @@ constexpr unsigned long kWeatherRefreshIntervalMs = 5UL * 60UL * 1000UL;
 constexpr unsigned long kWeatherRetryIntervalMs = 30UL * 1000UL;
 constexpr unsigned long kWeatherStaleIntervalMs = 30UL * 60UL * 1000UL;
 constexpr time_t kMinimumValidTime = 1704067200;  // 2024-01-01 UTC
-constexpr char kWeatherUrl[] =
-    "https://api.open-meteo.com/v1/forecast?latitude=-26.6553&longitude="
-    "153.0933&current=temperature_2m,weather_code&daily=temperature_2m_max,"
-    "temperature_2m_min,precipitation_probability_max&timezone="
-    "Australia%2FBrisbane&forecast_days=1";
 
 enum class Screen : uint8_t {
   Clock,
@@ -69,6 +67,14 @@ struct WeatherData {
   unsigned long updatedAt = 0;
 };
 
+enum class WeatherRequestState : uint8_t {
+  NotStarted,
+  Fetching,
+  Ready,
+  Failed,
+  NotConfigured,
+};
+
 // Brisbane local time. Keep the exams ordered from earliest to latest.
 constexpr Exam kExams[] = {
     {"MATH1051", 2026, 9, 19, 8, 0},
@@ -85,6 +91,8 @@ Screen currentScreen = Screen::Clock;
 WeatherData weather;
 bool weatherRequestAttempted = false;
 bool lastWeatherRequestSucceeded = false;
+WeatherRequestState weatherRequestState = WeatherRequestState::NotStarted;
+char weatherErrorText[18] = "";
 bool tapSensorReady = false;
 uint8_t tapSensorAddress = 0;
 volatile bool tapInterruptPending = false;
@@ -431,21 +439,33 @@ const char* weatherDescription(int code) {
 }
 
 bool fetchWeather() {
-  WiFiClientSecure client;
-  // The request carries no credentials or private data. Avoid pinning a CA
-  // certificate that would eventually expire and stop weather updates.
-  client.setInsecure();
+  if (WEATHER_API_URL[0] == '\0') {
+    weatherRequestState = WeatherRequestState::NotConfigured;
+    snprintf(weatherErrorText, sizeof(weatherErrorText), "NOT CONFIGURED");
+    Serial.println("WEATHER_API_URL is missing from include/secrets.h.");
+    return false;
+  }
+
+  weatherRequestState = WeatherRequestState::Fetching;
+  weatherErrorText[0] = '\0';
+  WiFiClient client;
 
   HTTPClient http;
   http.setConnectTimeout(5000);
   http.setTimeout(5000);
-  if (!http.begin(client, kWeatherUrl)) {
+  http.useHTTP10(true);
+  if (!http.begin(client, WEATHER_API_URL)) {
+    weatherRequestState = WeatherRequestState::Failed;
+    snprintf(weatherErrorText, sizeof(weatherErrorText), "START FAILED");
     Serial.println("Weather request could not be started.");
     return false;
   }
 
   const int status = http.GET();
   if (status != HTTP_CODE_OK) {
+    weatherRequestState = WeatherRequestState::Failed;
+    snprintf(weatherErrorText, sizeof(weatherErrorText), "HTTP ERROR %d",
+             status);
     Serial.printf("Weather request failed with HTTP status %d.\n", status);
     http.end();
     return false;
@@ -454,6 +474,8 @@ bool fetchWeather() {
   JsonDocument document;
   const DeserializationError error = deserializeJson(document, http.getStream());
   if (error) {
+    weatherRequestState = WeatherRequestState::Failed;
+    snprintf(weatherErrorText, sizeof(weatherErrorText), "BAD RESPONSE");
     Serial.printf("Weather response could not be parsed: %s\n", error.c_str());
     http.end();
     return false;
@@ -465,6 +487,8 @@ bool fetchWeather() {
       daily["temperature_2m_min"][0].isNull() ||
       daily["temperature_2m_max"][0].isNull() ||
       daily["precipitation_probability_max"][0].isNull()) {
+    weatherRequestState = WeatherRequestState::Failed;
+    snprintf(weatherErrorText, sizeof(weatherErrorText), "MISSING DATA");
     Serial.println("Weather response is missing required values.");
     http.end();
     return false;
@@ -477,15 +501,18 @@ bool fetchWeather() {
   weather.rainChance = daily["precipitation_probability_max"][0].as<int>();
   weather.updatedAt = millis();
   weather.available = true;
+  weatherRequestState = WeatherRequestState::Ready;
   http.end();
 
-  Serial.printf("Maroochydore weather updated: %.1f C, code %d, rain %d%%\n",
-                weather.temperature, weather.weatherCode, weather.rainChance);
+  Serial.printf("Weather updated: %.1f C, code %d, rain %d%%\n",
+                weather.temperature, weather.weatherCode,
+                weather.rainChance);
   return true;
 }
 
 void serviceWeather() {
-  if (WiFi.status() != WL_CONNECTED) {
+  if (WiFi.status() != WL_CONNECTED ||
+      weatherRequestState == WeatherRequestState::NotConfigured) {
     return;
   }
 
@@ -504,8 +531,14 @@ void serviceWeather() {
 
 void drawWeather() {
   if (!weather.available) {
-    drawStatus("WEATHER", WiFi.status() == WL_CONNECTED ? "LOADING..."
-                                                     : "NO CONNECTION");
+    const char* detail = "LOADING...";
+    if (WiFi.status() != WL_CONNECTED) {
+      detail = "NO CONNECTION";
+    } else if (weatherRequestState == WeatherRequestState::Failed ||
+               weatherRequestState == WeatherRequestState::NotConfigured) {
+      detail = weatherErrorText;
+    }
+    drawStatus("WEATHER", detail);
     return;
   }
 
@@ -525,7 +558,7 @@ void drawWeather() {
   oled.setFont(u8g2_font_5x8_tf);
   oled.drawStr(0, 7, "WEATHER");
   oled.drawStr(128 - oled.getStrWidth(statusText), 7, statusText);
-  drawCentered("MAROOCHYDORE", 16);
+  drawCentered("LOCAL FORECAST", 16);
 
   oled.setFont(u8g2_font_helvB24_tf);
   drawCentered(temperatureText, 41);
