@@ -107,7 +107,7 @@ void drawClock() {
   const double progress = dayProgressPercent(
       localTime.tm_hour, localTime.tm_min, localTime.tm_sec, now.tv_usec);
   char progressText[12];
-  snprintf(progressText, sizeof(progressText), "%.4f%%", progress);
+  snprintf(progressText, sizeof(progressText), "%.3f%%", progress);
 
   oled.clearBuffer();
   oled.setFont(u8g2_font_5x8_tf);

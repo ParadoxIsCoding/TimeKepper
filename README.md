@@ -3,7 +3,7 @@
 An ESP32-S3 N16R8 clock for the Jaycar XC3728 128 x 64 OLED. It gets the
 current time from internet time servers, shows 12-hour time with seconds and
 AM/PM, and displays the percentage of the local day completed above the clock
-to four decimal places.
+to three decimal places.
 
 The firmware is configured for Brisbane time (`AEST-10`, UTC+10 with no daylight
 saving).
@@ -69,12 +69,12 @@ temporarily drops, and attempts to reconnect every 30 seconds.
 
 ```text
              DAY COMPLETE
-              42.1234%
+               42.123%
     ----------------
            10:06:34 AM
 ```
 
-The percentage includes fractions of a second, so the four-decimal value
+The percentage includes fractions of a second, so the three-decimal value
 updates smoothly and is calculated from local Brisbane time.
 
 ## Changing the timezone
