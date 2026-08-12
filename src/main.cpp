@@ -36,6 +36,10 @@ constexpr char kTimezone[] = "AEST-10";  // Australia/Brisbane (no DST)
 constexpr unsigned long kDisplayIntervalMs = 100;
 constexpr unsigned long kReconnectIntervalMs = 30000;
 constexpr unsigned long kTapPollIntervalMs = 20;
+constexpr unsigned long kTapDebounceMs = 250;
+constexpr unsigned long kTapSequenceTimeoutMs = 900;
+constexpr unsigned long kAutoSwitchIntervalMs = 20UL * 1000UL;
+constexpr unsigned long kSwitchingStatusDurationMs = 1500;
 constexpr unsigned long kWeatherRefreshIntervalMs = 5UL * 60UL * 1000UL;
 constexpr unsigned long kWeatherRetryIntervalMs = 30UL * 1000UL;
 constexpr unsigned long kWeatherStaleIntervalMs = 30UL * 60UL * 1000UL;
@@ -88,6 +92,8 @@ U8G2_SH1106_128X64_NONAME_F_4W_SW_SPI oled(
 bool clockIsValid = false;
 bool clockSyncStarted = false;
 Screen currentScreen = Screen::Clock;
+bool displaySwitchingEnabled = false;
+bool switchingStatusVisible = false;
 WeatherData weather;
 bool weatherRequestAttempted = false;
 bool lastWeatherRequestSucceeded = false;
@@ -100,7 +106,11 @@ unsigned long lastDisplayUpdate = 0;
 unsigned long lastReconnectAttempt = 0;
 unsigned long lastTapPoll = 0;
 unsigned long lastTapHandled = 0;
+unsigned long lastTapInSequence = 0;
+unsigned long lastAutoScreenSwitch = 0;
+unsigned long switchingStatusStarted = 0;
 unsigned long lastWeatherAttempt = 0;
+uint8_t tapSequenceCount = 0;
 
 constexpr uint8_t kMmaWhoAmI = 0x0D;
 constexpr uint8_t kMmaPulseCfg = 0x21;
@@ -129,6 +139,24 @@ void makeUppercase(char* text) {
 
 void IRAM_ATTR onTapInterrupt() {
   tapInterruptPending = true;
+}
+
+void advanceScreen() {
+  const uint8_t nextScreen =
+      (static_cast<uint8_t>(currentScreen) + 1) %
+      static_cast<uint8_t>(Screen::Count);
+  currentScreen = static_cast<Screen>(nextScreen);
+  lastDisplayUpdate = 0;
+}
+
+void toggleDisplaySwitching(unsigned long now) {
+  displaySwitchingEnabled = !displaySwitchingEnabled;
+  switchingStatusVisible = true;
+  switchingStatusStarted = now;
+  lastAutoScreenSwitch = now;
+  lastDisplayUpdate = 0;
+  Serial.printf("Automatic display switching: %s\n",
+                displaySwitchingEnabled ? "ON" : "OFF");
 }
 
 bool readSensorRegister(uint8_t address, uint8_t reg, uint8_t& value) {
@@ -221,13 +249,54 @@ void serviceTapSensor() {
 
   uint8_t pulseSource = 0;
   if (readSensorRegister(tapSensorAddress, kMmaPulseSrc, pulseSource) &&
-      (pulseSource & 0x80) != 0 && now - lastTapHandled >= 250) {
-    const uint8_t nextScreen =
-        (static_cast<uint8_t>(currentScreen) + 1) %
-        static_cast<uint8_t>(Screen::Count);
-    currentScreen = static_cast<Screen>(nextScreen);
+      (pulseSource & 0x80) != 0 && now - lastTapHandled >= kTapDebounceMs) {
+    if (tapSequenceCount > 0 &&
+        now - lastTapInSequence >= kTapSequenceTimeoutMs) {
+      tapSequenceCount = 0;
+    }
+
+    ++tapSequenceCount;
+    lastTapInSequence = now;
     lastTapHandled = now;
+
+    if (tapSequenceCount >= 3) {
+      tapSequenceCount = 0;
+      toggleDisplaySwitching(now);
+    }
+  }
+}
+
+void serviceDisplaySwitching() {
+  const unsigned long now = millis();
+
+  // Wait briefly before applying a normal tap so the first tap in a triple-tap
+  // never changes the screen.
+  if (tapSequenceCount > 0 &&
+      now - lastTapInSequence >= kTapSequenceTimeoutMs) {
+    tapSequenceCount = 0;
+    advanceScreen();
+    lastAutoScreenSwitch = now;
+  }
+
+  if (switchingStatusVisible &&
+      now - switchingStatusStarted >= kSwitchingStatusDurationMs) {
+    switchingStatusVisible = false;
+    if (displaySwitchingEnabled) {
+      lastAutoScreenSwitch = now;
+    }
     lastDisplayUpdate = 0;
+  }
+
+  // Pause the automatic timer while a tap sequence or its confirmation screen
+  // is active, then resume a full 20-second interval.
+  if (!displaySwitchingEnabled || tapSequenceCount > 0 ||
+      switchingStatusVisible) {
+    return;
+  }
+
+  if (now - lastAutoScreenSwitch >= kAutoSwitchIntervalMs) {
+    advanceScreen();
+    lastAutoScreenSwitch = now;
   }
 }
 
@@ -630,6 +699,7 @@ void loop() {
   serviceWeather();
   // Keep the tap input responsive even while Wi-Fi/NTP is unavailable.
   serviceTapSensor();
+  serviceDisplaySwitching();
 
   if (!clockIsValid) {
     if (millis() - lastDisplayUpdate >= 1000) {
@@ -643,6 +713,13 @@ void loop() {
 
   if (millis() - lastDisplayUpdate >= kDisplayIntervalMs) {
     lastDisplayUpdate = millis();
+    if (switchingStatusVisible) {
+      drawStatus("DISPLAY SWITCHING",
+                 displaySwitchingEnabled ? "ON" : "OFF");
+      delay(5);
+      return;
+    }
+
     switch (currentScreen) {
       case Screen::Clock:
         drawClock();
