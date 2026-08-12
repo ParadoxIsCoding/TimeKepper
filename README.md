@@ -129,10 +129,10 @@ The third screen shows current weather for the privately configured location:
 
 ```text
 WEATHER                   WiFi
-         LOCAL FORECAST
              24°C
         PARTLY CLOUDY
-      L18 H27  RAIN 35%
+        LOW 18  HIGH 27
+            RAIN 35%
 ```
 
 Weather data comes from [Open-Meteo](https://open-meteo.com/en/docs) and

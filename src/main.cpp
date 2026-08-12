@@ -549,23 +549,25 @@ void drawWeather() {
   char temperatureText[10];
   snprintf(temperatureText, sizeof(temperatureText), "%.0f\xB0" "C",
            weather.temperature);
-  char summaryText[28];
-  snprintf(summaryText, sizeof(summaryText), "L%.0f H%.0f  RAIN %d%%",
-           weather.minimumTemperature, weather.maximumTemperature,
-           weather.rainChance);
+  char rangeText[16];
+  snprintf(rangeText, sizeof(rangeText), "LOW %.0f  HIGH %.0f",
+           weather.minimumTemperature, weather.maximumTemperature);
+  char rainText[16];
+  snprintf(rainText, sizeof(rainText), "RAIN %d%%", weather.rainChance);
 
   oled.clearBuffer();
   oled.setFont(u8g2_font_5x8_tf);
   oled.drawStr(0, 7, "WEATHER");
   oled.drawStr(128 - oled.getStrWidth(statusText), 7, statusText);
-  drawCentered("LOCAL FORECAST", 16);
 
-  oled.setFont(u8g2_font_helvB24_tf);
-  drawCentered(temperatureText, 41);
+  oled.setFont(u8g2_font_helvB18_tf);
+  drawCentered(temperatureText, 27);
   oled.setFont(u8g2_font_helvB08_tf);
-  drawCentered(weatherDescription(weather.weatherCode), 51);
+  drawCentered(weatherDescription(weather.weatherCode), 39);
   oled.setFont(u8g2_font_5x8_tf);
-  drawCentered(summaryText, 63);
+  drawCentered(rangeText, 49);
+  oled.setFont(u8g2_font_helvB12_tf);
+  drawCentered(rainText, 64);
   oled.sendBuffer();
 }
 
