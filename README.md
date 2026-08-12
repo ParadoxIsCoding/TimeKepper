@@ -68,14 +68,17 @@ temporarily drops, and attempts to reconnect every 30 seconds.
 ## Display layout
 
 ```text
-             DAY COMPLETE
-               42.123%
-    ----------------
-           10:06:34 AM
+WED 12 AUG                 WiFi
+           DAY COMPLETE
+              42.123%
+   ██████████░░░░░░░░░░░░
+          10:06:34 AM
 ```
 
 The percentage includes fractions of a second, so the three-decimal value
-updates smoothly and is calculated from local Brisbane time.
+updates smoothly and is calculated from local Brisbane time. The progress bar
+provides a quick visual indication of the day completed, and the top-right
+status changes to `----` whenever Wi-Fi is disconnected.
 
 ## Changing the timezone
 

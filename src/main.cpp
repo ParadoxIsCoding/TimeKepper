@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 #include <WiFi.h>
+#include <ctype.h>
 #include <sys/time.h>
 #include <time.h>
 
@@ -100,6 +101,12 @@ void drawClock() {
   tm localTime{};
   localtime_r(&now.tv_sec, &localTime);
 
+  char dateText[11];
+  strftime(dateText, sizeof(dateText), "%a %d %b", &localTime);
+  for (char* character = dateText; *character != '\0'; ++character) {
+    *character = static_cast<char>(toupper(*character));
+  }
+
   char timeText[12];
   strftime(timeText, sizeof(timeText), "%I:%M:%S %p", &localTime);
   const char* displayedTime = timeText[0] == '0' ? timeText + 1 : timeText;
@@ -108,18 +115,26 @@ void drawClock() {
       localTime.tm_hour, localTime.tm_min, localTime.tm_sec, now.tv_usec);
   char progressText[12];
   snprintf(progressText, sizeof(progressText), "%.3f%%", progress);
+  const uint8_t progressBarWidth =
+      static_cast<uint8_t>(progress * 1.2 + 0.5);
+  const char* wifiText = WiFi.status() == WL_CONNECTED ? "WiFi" : "----";
 
   oled.clearBuffer();
   oled.setFont(u8g2_font_5x8_tf);
-  drawCentered("DAY COMPLETE", 7);
+  oled.drawStr(0, 7, dateText);
+  oled.drawStr(128 - oled.getStrWidth(wifiText), 7, wifiText);
+  drawCentered("DAY COMPLETE", 15);
   oled.setFont(u8g2_font_logisoso20_tn);
   if (oled.getStrWidth(progressText) > 124) {
     oled.setFont(u8g2_font_logisoso18_tn);
   }
-  drawCentered(progressText, 33);
-  oled.drawHLine(8, 39, 112);
+  drawCentered(progressText, 37);
+  oled.drawFrame(3, 40, 122, 7);
+  if (progressBarWidth > 0) {
+    oled.drawBox(4, 41, progressBarWidth, 5);
+  }
   oled.setFont(u8g2_font_helvB10_tf);
-  drawCentered(displayedTime, 59);
+  drawCentered(displayedTime, 62);
   oled.sendBuffer();
 }
 
