@@ -60,9 +60,8 @@ bool currentTimeIsValid() {
 }
 
 void startClockSync() {
-  setenv("TZ", kTimezone, 1);
-  tzset();
-  configTime(0, 0, "pool.ntp.org", "time.cloudflare.com", "time.nist.gov");
+  configTzTime(kTimezone, "pool.ntp.org", "time.cloudflare.com",
+               "time.nist.gov");
   clockSyncStarted = true;
 }
 
