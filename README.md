@@ -53,9 +53,8 @@ to bottom when viewed as shown in Jaycar's product photo. Connect it as follows:
 
 The sensor is an MMA8452Q. Its firmware address is detected automatically at
 `0x1D` or `0x1C`. The firmware configures the sensor for single-pulse detection
-on all three axes. A single tap cycles through the clock, next-exam countdown,
-and weather screens. Three taps in succession toggle optional automatic display
-switching.
+on all three axes. A tap cycles through the clock, next-exam countdown, and
+weather screens; the previous automatic 30-second screen change is disabled.
 The module operates from 1.6–3.6 V, so use the ESP32-S3 `3V3` pin. The module's
 I²C bus should have pull-ups to 3V3; if your particular board revision does not
 already provide them, add one 4.7 kΩ resistor from `SDA` to `3V3` and another
@@ -154,13 +153,6 @@ Tap the connected XC3732 once to advance to the next screen. The firmware uses
 `INT1` for an immediate notification and also polls the latched pulse status
 over I²C, so it can still detect a tap if the interrupt wire is missing. The
 display refresh interval does not determine whether a tap is detected.
-
-Triple-tap the sensor to turn automatic display switching on or off. The OLED
-briefly confirms `DISPLAY SWITCHING ON` or `DISPLAY SWITCHING OFF`. While it is
-enabled, the clock, exam, and weather screens advance every 20 seconds. A
-single tap can still advance manually and restarts the 20-second interval.
-The firmware waits up to 900 milliseconds for the next tap before treating a
-sequence as a single manual screen change.
 
 ## Changing the timezone
 
