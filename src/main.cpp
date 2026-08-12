@@ -36,10 +36,15 @@ constexpr char kTimezone[] = "AEST-10";  // Australia/Brisbane (no DST)
 constexpr unsigned long kDisplayIntervalMs = 100;
 constexpr unsigned long kReconnectIntervalMs = 30000;
 constexpr unsigned long kTapPollIntervalMs = 20;
+constexpr unsigned long kVibrationPollIntervalMs = 50;
+constexpr unsigned long kDisplayWakeDurationMs = 5UL * 60UL * 1000UL;
 constexpr unsigned long kWeatherRefreshIntervalMs = 5UL * 60UL * 1000UL;
 constexpr unsigned long kWeatherRetryIntervalMs = 30UL * 1000UL;
 constexpr unsigned long kWeatherStaleIntervalMs = 30UL * 60UL * 1000UL;
 constexpr time_t kMinimumValidTime = 1704067200;  // 2024-01-01 UTC
+constexpr int kVibrationThresholdCounts = 10;
+constexpr int kSleepStartHour = 22;
+constexpr int kSleepEndHour = 5;
 
 enum class Screen : uint8_t {
   Clock,
@@ -94,15 +99,23 @@ bool lastWeatherRequestSucceeded = false;
 WeatherRequestState weatherRequestState = WeatherRequestState::NotStarted;
 char weatherErrorText[18] = "";
 bool tapSensorReady = false;
+bool displaySleeping = false;
+bool accelerationSampleReady = false;
 uint8_t tapSensorAddress = 0;
 volatile bool tapInterruptPending = false;
 unsigned long lastDisplayUpdate = 0;
 unsigned long lastReconnectAttempt = 0;
 unsigned long lastTapPoll = 0;
 unsigned long lastTapHandled = 0;
+unsigned long lastVibrationPoll = 0;
+unsigned long lastVibrationDetected = 0;
 unsigned long lastWeatherAttempt = 0;
+int16_t previousAccelerationX = 0;
+int16_t previousAccelerationY = 0;
+int16_t previousAccelerationZ = 0;
 
 constexpr uint8_t kMmaWhoAmI = 0x0D;
+constexpr uint8_t kMmaOutXMsb = 0x01;
 constexpr uint8_t kMmaPulseCfg = 0x21;
 constexpr uint8_t kMmaPulseSrc = 0x22;
 constexpr uint8_t kMmaPulseThsx = 0x23;
@@ -140,6 +153,21 @@ bool readSensorRegister(uint8_t address, uint8_t reg, uint8_t& value) {
     return false;
   }
   value = Wire.read();
+  return true;
+}
+
+bool readAcceleration(int16_t& x, int16_t& y, int16_t& z) {
+  Wire.beginTransmission(tapSensorAddress);
+  Wire.write(kMmaOutXMsb);
+  if (Wire.endTransmission(false) != 0 ||
+      Wire.requestFrom(tapSensorAddress, static_cast<uint8_t>(6)) != 6) {
+    return false;
+  }
+
+  // MMA8452Q samples are 12-bit signed values, left-aligned in two bytes.
+  x = static_cast<int16_t>((Wire.read() << 8) | Wire.read()) >> 4;
+  y = static_cast<int16_t>((Wire.read() << 8) | Wire.read()) >> 4;
+  z = static_cast<int16_t>((Wire.read() << 8) | Wire.read()) >> 4;
   return true;
 }
 
@@ -227,8 +255,74 @@ void serviceTapSensor() {
         static_cast<uint8_t>(Screen::Count);
     currentScreen = static_cast<Screen>(nextScreen);
     lastTapHandled = now;
+    lastVibrationDetected = now;
     lastDisplayUpdate = 0;
   }
+}
+
+void serviceVibrationSensor() {
+  if (!tapSensorReady) {
+    return;
+  }
+
+  const unsigned long now = millis();
+  if (now - lastVibrationPoll < kVibrationPollIntervalMs) {
+    return;
+  }
+  lastVibrationPoll = now;
+
+  int16_t x = 0;
+  int16_t y = 0;
+  int16_t z = 0;
+  if (!readAcceleration(x, y, z)) {
+    return;
+  }
+
+  if (accelerationSampleReady) {
+    const int xChange = abs(static_cast<int>(x) - previousAccelerationX);
+    const int yChange = abs(static_cast<int>(y) - previousAccelerationY);
+    const int zChange = abs(static_cast<int>(z) - previousAccelerationZ);
+    if (xChange >= kVibrationThresholdCounts ||
+        yChange >= kVibrationThresholdCounts ||
+        zChange >= kVibrationThresholdCounts) {
+      lastVibrationDetected = now;
+    }
+  }
+
+  previousAccelerationX = x;
+  previousAccelerationY = y;
+  previousAccelerationZ = z;
+  accelerationSampleReady = true;
+}
+
+bool quietHoursAreActive() {
+  time_t now;
+  time(&now);
+  tm localTime{};
+  localtime_r(&now, &localTime);
+  return localTime.tm_hour >= kSleepStartHour ||
+         localTime.tm_hour < kSleepEndHour;
+}
+
+void serviceDisplaySleep() {
+  if (!clockIsValid) {
+    return;
+  }
+
+  const unsigned long now = millis();
+  const bool recentVibration =
+      lastVibrationDetected != 0 &&
+      now - lastVibrationDetected < kDisplayWakeDurationMs;
+  const bool shouldSleep = quietHoursAreActive() && !recentVibration;
+  if (shouldSleep == displaySleeping) {
+    return;
+  }
+
+  displaySleeping = shouldSleep;
+  oled.setPowerSave(displaySleeping ? 1 : 0);
+  lastDisplayUpdate = 0;
+  Serial.printf("Quiet-hours display sleep: %s\n",
+                displaySleeping ? "ON" : "OFF");
 }
 
 void drawStatus(const char* heading, const char* detail) {
@@ -630,6 +724,8 @@ void loop() {
   serviceWeather();
   // Keep the tap input responsive even while Wi-Fi/NTP is unavailable.
   serviceTapSensor();
+  serviceVibrationSensor();
+  serviceDisplaySleep();
 
   if (!clockIsValid) {
     if (millis() - lastDisplayUpdate >= 1000) {
@@ -638,6 +734,11 @@ void loop() {
                  "Retrying...");
     }
     delay(10);
+    return;
+  }
+
+  if (displaySleeping) {
+    delay(5);
     return;
   }
 
