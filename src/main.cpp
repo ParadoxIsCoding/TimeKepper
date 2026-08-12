@@ -225,10 +225,10 @@ void drawExamCountdown() {
   oled.setFont(u8g2_font_5x8_tf);
   oled.drawStr(0, 7, "NEXT EXAM");
   oled.drawStr(128 - oled.getStrWidth(wifiText), 7, wifiText);
-  oled.setFont(u8g2_font_helvB14_tf);
-  drawCentered(exam->course, 25);
-  oled.setFont(days > 0 ? u8g2_font_helvB10_tf : u8g2_font_logisoso18_tn);
-  drawCentered(countdownText, 48);
+  oled.setFont(u8g2_font_helvB12_tf);
+  drawCentered(exam->course, 24);
+  oled.setFont(days > 0 ? u8g2_font_helvB12_tf : u8g2_font_logisoso20_tn);
+  drawCentered(countdownText, 49);
   oled.setFont(u8g2_font_5x8_tf);
   drawCentered(examDateText, 63);
   oled.sendBuffer();
