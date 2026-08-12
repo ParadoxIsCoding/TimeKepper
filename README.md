@@ -3,7 +3,8 @@
 An ESP32-S3 N16R8 clock for the Jaycar XC3728 128 x 64 OLED. It gets the
 current time from internet time servers, shows 12-hour time with seconds and
 AM/PM, and displays the percentage of the local day completed above the clock
-to three decimal places.
+to three decimal places. Every 30 seconds it alternates to a countdown for the
+next scheduled exam.
 
 The firmware is configured for Brisbane time (`AEST-10`, UTC+10 with no daylight
 saving).
@@ -79,6 +80,25 @@ The percentage includes fractions of a second, so the three-decimal value
 updates smoothly and is calculated from local Brisbane time. The progress bar
 provides a quick visual indication of the day completed, and the top-right
 status changes to `----` whenever Wi-Fi is disconnected.
+
+The alternate screen automatically advances to the next future exam:
+
+```text
+NEXT EXAM                  WiFi
+             MATH1051
+          37d 14h 22m
+      SAT 19 SEP 08:00 AM
+```
+
+The configured Brisbane exam schedule is:
+
+- MATH1051 — Saturday 19 September 2026 at 8:00 AM
+- ENGG1300 — Saturday 19 September 2026 at 2:00 PM
+
+The countdown shows days, hours, and minutes until the final 24 hours, when it
+switches to hours, minutes, and seconds. Once MATH1051 starts, the next exam
+screen automatically changes to ENGG1300. The schedule is stored in `kExams`
+near the top of `src/main.cpp`.
 
 ## Changing the timezone
 

@@ -24,8 +24,24 @@ constexpr uint8_t kOledCsPin = 10;
 
 constexpr char kTimezone[] = "AEST-10";  // Australia/Brisbane (no DST)
 constexpr unsigned long kDisplayIntervalMs = 100;
+constexpr unsigned long kScreenIntervalMs = 30000;
 constexpr unsigned long kReconnectIntervalMs = 30000;
 constexpr time_t kMinimumValidTime = 1704067200;  // 2024-01-01 UTC
+
+struct Exam {
+  const char* course;
+  int year;
+  int month;
+  int day;
+  int hour;
+  int minute;
+};
+
+// Brisbane local time. Keep the exams ordered from earliest to latest.
+constexpr Exam kExams[] = {
+    {"MATH1051", 2026, 9, 19, 8, 0},
+    {"ENGG1300", 2026, 9, 19, 14, 0},
+};
 
 U8G2_SH1106_128X64_NONAME_F_4W_SW_SPI oled(
     U8G2_R0, kOledClockPin, kOledDataPin, kOledCsPin, kOledDcPin,
@@ -33,12 +49,20 @@ U8G2_SH1106_128X64_NONAME_F_4W_SW_SPI oled(
 
 bool clockIsValid = false;
 bool clockSyncStarted = false;
+bool showExamScreen = false;
 unsigned long lastDisplayUpdate = 0;
 unsigned long lastReconnectAttempt = 0;
+unsigned long lastScreenChange = 0;
 
 void drawCentered(const char* text, int baseline) {
   const int width = oled.getStrWidth(text);
   oled.drawStr((128 - width) / 2, baseline, text);
+}
+
+void makeUppercase(char* text) {
+  for (char* character = text; *character != '\0'; ++character) {
+    *character = static_cast<char>(toupper(*character));
+  }
 }
 
 void drawStatus(const char* heading, const char* detail) {
@@ -88,6 +112,9 @@ void connectToWifi() {
       delay(100);
     }
     clockIsValid = currentTimeIsValid();
+    if (clockIsValid) {
+      lastScreenChange = millis();
+    }
     Serial.println(clockIsValid ? "Clock synchronized." : "Time sync timed out.");
   } else {
     Serial.println("Wi-Fi connection timed out; retrying in the background.");
@@ -103,9 +130,7 @@ void drawClock() {
 
   char dateText[11];
   strftime(dateText, sizeof(dateText), "%a %d %b", &localTime);
-  for (char* character = dateText; *character != '\0'; ++character) {
-    *character = static_cast<char>(toupper(*character));
-  }
+  makeUppercase(dateText);
 
   char timeText[12];
   strftime(timeText, sizeof(timeText), "%I:%M:%S %p", &localTime);
@@ -138,6 +163,77 @@ void drawClock() {
   oled.sendBuffer();
 }
 
+time_t examTimestamp(const Exam& exam) {
+  tm examTime{};
+  examTime.tm_year = exam.year - 1900;
+  examTime.tm_mon = exam.month - 1;
+  examTime.tm_mday = exam.day;
+  examTime.tm_hour = exam.hour;
+  examTime.tm_min = exam.minute;
+  examTime.tm_isdst = -1;
+  return mktime(&examTime);
+}
+
+const Exam* findNextExam(time_t now, time_t& startsAt) {
+  for (const Exam& exam : kExams) {
+    const time_t candidate = examTimestamp(exam);
+    if (candidate > now) {
+      startsAt = candidate;
+      return &exam;
+    }
+  }
+  return nullptr;
+}
+
+void drawExamCountdown() {
+  time_t now;
+  time(&now);
+
+  time_t startsAt = 0;
+  const Exam* exam = findNextExam(now, startsAt);
+  if (exam == nullptr) {
+    drawStatus("NO UPCOMING", "EXAMS SET");
+    return;
+  }
+
+  long remaining = static_cast<long>(difftime(startsAt, now));
+  const long days = remaining / 86400;
+  remaining %= 86400;
+  const long hours = remaining / 3600;
+  remaining %= 3600;
+  const long minutes = remaining / 60;
+  const long seconds = remaining % 60;
+
+  char countdownText[20];
+  if (days > 0) {
+    snprintf(countdownText, sizeof(countdownText), "%ldd %02ldh %02ldm", days,
+             hours, minutes);
+  } else {
+    snprintf(countdownText, sizeof(countdownText), "%02ld:%02ld:%02ld", hours,
+             minutes, seconds);
+  }
+
+  tm localExamTime{};
+  localtime_r(&startsAt, &localExamTime);
+  char examDateText[22];
+  strftime(examDateText, sizeof(examDateText), "%a %d %b %I:%M %p",
+           &localExamTime);
+  makeUppercase(examDateText);
+
+  const char* wifiText = WiFi.status() == WL_CONNECTED ? "WiFi" : "----";
+  oled.clearBuffer();
+  oled.setFont(u8g2_font_5x8_tf);
+  oled.drawStr(0, 7, "NEXT EXAM");
+  oled.drawStr(128 - oled.getStrWidth(wifiText), 7, wifiText);
+  oled.setFont(u8g2_font_helvB14_tf);
+  drawCentered(exam->course, 25);
+  oled.setFont(days > 0 ? u8g2_font_helvB10_tf : u8g2_font_logisoso18_tn);
+  drawCentered(countdownText, 48);
+  oled.setFont(u8g2_font_5x8_tf);
+  drawCentered(examDateText, 63);
+  oled.sendBuffer();
+}
+
 void serviceWifi() {
   if (WiFi.status() == WL_CONNECTED) {
     if (!clockSyncStarted) {
@@ -146,6 +242,7 @@ void serviceWifi() {
     }
     if (!clockIsValid && currentTimeIsValid()) {
       clockIsValid = true;
+      lastScreenChange = millis();
       Serial.println("Clock synchronized.");
     }
     return;
@@ -201,9 +298,18 @@ void loop() {
     return;
   }
 
+  if (millis() - lastScreenChange >= kScreenIntervalMs) {
+    lastScreenChange = millis();
+    showExamScreen = !showExamScreen;
+  }
+
   if (millis() - lastDisplayUpdate >= kDisplayIntervalMs) {
     lastDisplayUpdate = millis();
-    drawClock();
+    if (showExamScreen) {
+      drawExamCountdown();
+    } else {
+      drawClock();
+    }
   }
 
   delay(5);
