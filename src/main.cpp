@@ -100,22 +100,26 @@ void drawClock() {
   tm localTime{};
   localtime_r(&now.tv_sec, &localTime);
 
-  char timeText[9];
-  strftime(timeText, sizeof(timeText), "%H:%M:%S", &localTime);
+  char timeText[12];
+  strftime(timeText, sizeof(timeText), "%I:%M:%S %p", &localTime);
+  const char* displayedTime = timeText[0] == '0' ? timeText + 1 : timeText;
 
   const double progress = dayProgressPercent(
       localTime.tm_hour, localTime.tm_min, localTime.tm_sec, now.tv_usec);
   char progressText[12];
-  snprintf(progressText, sizeof(progressText), "%.3f%%", progress);
+  snprintf(progressText, sizeof(progressText), "%.4f%%", progress);
 
   oled.clearBuffer();
-  oled.setFont(u8g2_font_helvB08_tf);
-  drawCentered("DAY COMPLETE", 9);
-  oled.setFont(u8g2_font_helvB14_tf);
-  drawCentered(progressText, 27);
-  oled.drawHLine(8, 32, 112);
-  oled.setFont(u8g2_font_logisoso18_tn);
-  drawCentered(timeText, 59);
+  oled.setFont(u8g2_font_5x8_tf);
+  drawCentered("DAY COMPLETE", 7);
+  oled.setFont(u8g2_font_logisoso20_tn);
+  if (oled.getStrWidth(progressText) > 124) {
+    oled.setFont(u8g2_font_logisoso18_tn);
+  }
+  drawCentered(progressText, 33);
+  oled.drawHLine(8, 39, 112);
+  oled.setFont(u8g2_font_helvB10_tf);
+  drawCentered(displayedTime, 59);
   oled.sendBuffer();
 }
 
