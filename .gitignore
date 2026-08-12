@@ -67,3 +67,11 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# PlatformIO
+.pio/
+.platformio/
+.vscode/
+
+# Local Wi-Fi credentials (copy from include/secrets.example.h)
+include/secrets.h
