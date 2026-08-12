@@ -3,8 +3,8 @@
 An ESP32-S3 N16R8 clock for the Jaycar XC3728 128 x 64 OLED. It gets the
 current time from internet time servers, shows 12-hour time with seconds and
 AM/PM, and displays the percentage of the local day completed above the clock
-to three decimal places. Tapping the connected XC3732 sensor switches to the
-countdown for the next scheduled exam.
+to three decimal places. Tapping the connected XC3732 sensor cycles between the
+clock, the next scheduled exam, and current Maroochydore weather.
 
 The firmware is configured for Brisbane time (`AEST-10`, UTC+10 with no daylight
 saving).
@@ -53,8 +53,8 @@ to bottom when viewed as shown in Jaycar's product photo. Connect it as follows:
 
 The sensor is an MMA8452Q. Its firmware address is detected automatically at
 `0x1D` or `0x1C`. The firmware configures the sensor for single-pulse detection
-on all three axes. A tap toggles between the clock screen and the next-exam
-countdown screen; the previous automatic 30-second screen change is disabled.
+on all three axes. A tap cycles through the clock, next-exam countdown, and
+weather screens; the previous automatic 30-second screen change is disabled.
 The module operates from 1.6–3.6 V, so use the ESP32-S3 `3V3` pin. The module's
 I²C bus should have pull-ups to 3V3; if your particular board revision does not
 already provide them, add one 4.7 kΩ resistor from `SDA` to `3V3` and another
@@ -125,10 +125,28 @@ hours, when it switches to hours, minutes, and seconds. Once MATH1051 starts,
 the next exam screen automatically changes to ENGG1300. The schedule is stored
 in `kExams` near the top of `src/main.cpp`.
 
-Tap the connected XC3732 once to switch screens. The firmware uses `INT1` for
-an immediate notification and also polls the latched pulse status over I²C, so
-it can still detect a tap if the interrupt wire is missing. The display refresh
-interval does not determine whether a tap is detected.
+The third screen shows the current weather for Maroochydore, Sunshine Coast:
+
+```text
+WEATHER                   WiFi
+          MAROOCHYDORE
+             24°C
+        PARTLY CLOUDY
+      L18 H27  RAIN 35%
+```
+
+Weather data comes from [Open-Meteo](https://open-meteo.com/en/docs) and
+refreshes every five minutes. Current temperature and conditions are shown with
+the day's forecast minimum, maximum, and maximum precipitation probability. A
+failed refresh retains the last good reading; the screen displays `STALE` once
+that reading is more than 30 minutes old. While no reading is available, it
+displays `LOADING...` or `NO CONNECTION`. Failed initial requests retry every
+30 seconds.
+
+Tap the connected XC3732 once to advance to the next screen. The firmware uses
+`INT1` for an immediate notification and also polls the latched pulse status
+over I²C, so it can still detect a tap if the interrupt wire is missing. The
+display refresh interval does not determine whether a tap is detected.
 
 ## Changing the timezone
 

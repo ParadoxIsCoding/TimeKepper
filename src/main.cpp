@@ -1,6 +1,9 @@
 #include <Arduino.h>
+#include <ArduinoJson.h>
+#include <HTTPClient.h>
 #include <U8g2lib.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <Wire.h>
 #include <ctype.h>
 #include <sys/time.h>
@@ -30,7 +33,22 @@ constexpr char kTimezone[] = "AEST-10";  // Australia/Brisbane (no DST)
 constexpr unsigned long kDisplayIntervalMs = 100;
 constexpr unsigned long kReconnectIntervalMs = 30000;
 constexpr unsigned long kTapPollIntervalMs = 20;
+constexpr unsigned long kWeatherRefreshIntervalMs = 5UL * 60UL * 1000UL;
+constexpr unsigned long kWeatherRetryIntervalMs = 30UL * 1000UL;
+constexpr unsigned long kWeatherStaleIntervalMs = 30UL * 60UL * 1000UL;
 constexpr time_t kMinimumValidTime = 1704067200;  // 2024-01-01 UTC
+constexpr char kWeatherUrl[] =
+    "https://api.open-meteo.com/v1/forecast?latitude=-26.6553&longitude="
+    "153.0933&current=temperature_2m,weather_code&daily=temperature_2m_max,"
+    "temperature_2m_min,precipitation_probability_max&timezone="
+    "Australia%2FBrisbane&forecast_days=1";
+
+enum class Screen : uint8_t {
+  Clock,
+  Exam,
+  Weather,
+  Count,
+};
 
 struct Exam {
   const char* course;
@@ -39,6 +57,16 @@ struct Exam {
   int day;
   int hour;
   int minute;
+};
+
+struct WeatherData {
+  bool available = false;
+  float temperature = 0;
+  float minimumTemperature = 0;
+  float maximumTemperature = 0;
+  int weatherCode = 0;
+  int rainChance = 0;
+  unsigned long updatedAt = 0;
 };
 
 // Brisbane local time. Keep the exams ordered from earliest to latest.
@@ -53,7 +81,10 @@ U8G2_SH1106_128X64_NONAME_F_4W_SW_SPI oled(
 
 bool clockIsValid = false;
 bool clockSyncStarted = false;
-bool showExamScreen = false;
+Screen currentScreen = Screen::Clock;
+WeatherData weather;
+bool weatherRequestAttempted = false;
+bool lastWeatherRequestSucceeded = false;
 bool tapSensorReady = false;
 uint8_t tapSensorAddress = 0;
 volatile bool tapInterruptPending = false;
@@ -61,6 +92,7 @@ unsigned long lastDisplayUpdate = 0;
 unsigned long lastReconnectAttempt = 0;
 unsigned long lastTapPoll = 0;
 unsigned long lastTapHandled = 0;
+unsigned long lastWeatherAttempt = 0;
 
 constexpr uint8_t kMmaWhoAmI = 0x0D;
 constexpr uint8_t kMmaPulseCfg = 0x21;
@@ -182,7 +214,10 @@ void serviceTapSensor() {
   uint8_t pulseSource = 0;
   if (readSensorRegister(tapSensorAddress, kMmaPulseSrc, pulseSource) &&
       (pulseSource & 0x80) != 0 && now - lastTapHandled >= 250) {
-    showExamScreen = !showExamScreen;
+    const uint8_t nextScreen =
+        (static_cast<uint8_t>(currentScreen) + 1) %
+        static_cast<uint8_t>(Screen::Count);
+    currentScreen = static_cast<Screen>(nextScreen);
     lastTapHandled = now;
     lastDisplayUpdate = 0;
   }
@@ -375,6 +410,132 @@ void drawExamCountdown() {
   oled.sendBuffer();
 }
 
+const char* weatherDescription(int code) {
+  if (code == 0) return "CLEAR";
+  if (code == 1) return "MOSTLY CLEAR";
+  if (code == 2) return "PARTLY CLOUDY";
+  if (code == 3) return "OVERCAST";
+  if (code == 45 || code == 48) return "FOG";
+  if (code >= 51 && code <= 55) return "DRIZZLE";
+  if (code == 56 || code == 57) return "FRZ DRIZZLE";
+  if (code == 61 || code == 63) return "RAIN";
+  if (code == 65) return "HEAVY RAIN";
+  if (code == 66 || code == 67) return "FRZ RAIN";
+  if (code >= 71 && code <= 75) return "SNOW";
+  if (code == 77) return "SNOW GRAINS";
+  if (code >= 80 && code <= 82) return "SHOWERS";
+  if (code == 85 || code == 86) return "SNOW SHOWERS";
+  if (code == 95) return "THUNDERSTORM";
+  if (code == 96 || code == 99) return "STORM + HAIL";
+  return "UNKNOWN";
+}
+
+bool fetchWeather() {
+  WiFiClientSecure client;
+  // The request carries no credentials or private data. Avoid pinning a CA
+  // certificate that would eventually expire and stop weather updates.
+  client.setInsecure();
+
+  HTTPClient http;
+  http.setConnectTimeout(5000);
+  http.setTimeout(5000);
+  if (!http.begin(client, kWeatherUrl)) {
+    Serial.println("Weather request could not be started.");
+    return false;
+  }
+
+  const int status = http.GET();
+  if (status != HTTP_CODE_OK) {
+    Serial.printf("Weather request failed with HTTP status %d.\n", status);
+    http.end();
+    return false;
+  }
+
+  JsonDocument document;
+  const DeserializationError error = deserializeJson(document, http.getStream());
+  if (error) {
+    Serial.printf("Weather response could not be parsed: %s\n", error.c_str());
+    http.end();
+    return false;
+  }
+
+  const JsonVariant current = document["current"];
+  const JsonVariant daily = document["daily"];
+  if (current["temperature_2m"].isNull() || current["weather_code"].isNull() ||
+      daily["temperature_2m_min"][0].isNull() ||
+      daily["temperature_2m_max"][0].isNull() ||
+      daily["precipitation_probability_max"][0].isNull()) {
+    Serial.println("Weather response is missing required values.");
+    http.end();
+    return false;
+  }
+
+  weather.temperature = current["temperature_2m"].as<float>();
+  weather.weatherCode = current["weather_code"].as<int>();
+  weather.minimumTemperature = daily["temperature_2m_min"][0].as<float>();
+  weather.maximumTemperature = daily["temperature_2m_max"][0].as<float>();
+  weather.rainChance = daily["precipitation_probability_max"][0].as<int>();
+  weather.updatedAt = millis();
+  weather.available = true;
+  http.end();
+
+  Serial.printf("Maroochydore weather updated: %.1f C, code %d, rain %d%%\n",
+                weather.temperature, weather.weatherCode, weather.rainChance);
+  return true;
+}
+
+void serviceWeather() {
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  const unsigned long now = millis();
+  const unsigned long interval =
+      lastWeatherRequestSucceeded ? kWeatherRefreshIntervalMs
+                                  : kWeatherRetryIntervalMs;
+  if (weatherRequestAttempted && now - lastWeatherAttempt < interval) {
+    return;
+  }
+
+  weatherRequestAttempted = true;
+  lastWeatherAttempt = now;
+  lastWeatherRequestSucceeded = fetchWeather();
+}
+
+void drawWeather() {
+  if (!weather.available) {
+    drawStatus("WEATHER", WiFi.status() == WL_CONNECTED ? "LOADING..."
+                                                     : "NO CONNECTION");
+    return;
+  }
+
+  const bool stale = millis() - weather.updatedAt >= kWeatherStaleIntervalMs;
+  const char* statusText = stale ? "STALE"
+                                 : (WiFi.status() == WL_CONNECTED ? "WiFi"
+                                                                  : "----");
+  char temperatureText[10];
+  snprintf(temperatureText, sizeof(temperatureText), "%.0f\xB0" "C",
+           weather.temperature);
+  char summaryText[28];
+  snprintf(summaryText, sizeof(summaryText), "L%.0f H%.0f  RAIN %d%%",
+           weather.minimumTemperature, weather.maximumTemperature,
+           weather.rainChance);
+
+  oled.clearBuffer();
+  oled.setFont(u8g2_font_5x8_tf);
+  oled.drawStr(0, 7, "WEATHER");
+  oled.drawStr(128 - oled.getStrWidth(statusText), 7, statusText);
+  drawCentered("MAROOCHYDORE", 16);
+
+  oled.setFont(u8g2_font_helvB24_tf);
+  drawCentered(temperatureText, 41);
+  oled.setFont(u8g2_font_helvB08_tf);
+  drawCentered(weatherDescription(weather.weatherCode), 51);
+  oled.setFont(u8g2_font_5x8_tf);
+  drawCentered(summaryText, 63);
+  oled.sendBuffer();
+}
+
 void serviceWifi() {
   if (WiFi.status() == WL_CONNECTED) {
     if (!clockSyncStarted) {
@@ -431,6 +592,7 @@ void loop() {
   }
 
   serviceWifi();
+  serviceWeather();
   // Keep the tap input responsive even while Wi-Fi/NTP is unavailable.
   serviceTapSensor();
 
@@ -446,10 +608,19 @@ void loop() {
 
   if (millis() - lastDisplayUpdate >= kDisplayIntervalMs) {
     lastDisplayUpdate = millis();
-    if (showExamScreen) {
-      drawExamCountdown();
-    } else {
-      drawClock();
+    switch (currentScreen) {
+      case Screen::Clock:
+        drawClock();
+        break;
+      case Screen::Exam:
+        drawExamCountdown();
+        break;
+      case Screen::Weather:
+        drawWeather();
+        break;
+      case Screen::Count:
+        currentScreen = Screen::Clock;
+        break;
     }
   }
 
