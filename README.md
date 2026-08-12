@@ -3,8 +3,8 @@
 An ESP32-S3 N16R8 clock for the Jaycar XC3728 128 x 64 OLED. It gets the
 current time from internet time servers, shows 12-hour time with seconds and
 AM/PM, and displays the percentage of the local day completed above the clock
-to three decimal places. Every 30 seconds it alternates to a countdown for the
-next scheduled exam.
+to three decimal places. Tapping the connected XC3732 sensor switches to the
+countdown for the next scheduled exam.
 
 The firmware is configured for Brisbane time (`AEST-10`, UTC+10 with no daylight
 saving).
@@ -13,7 +13,8 @@ saving).
 
 - ESP32-S3 DevKitC-1 with an N16R8 module (16 MB flash, 8 MB PSRAM)
 - [Jaycar XC3728 1.3-inch 128 x 64 OLED](https://www.jaycar.com.au/duinotech-arduino-compatible-1-3-inch-monochrome-oled-display/p/XC3728)
-- Seven female-to-female jumper wires (or wires appropriate for your headers)
+- [Jaycar XC3732 MMA8452Q tri-axis digital tilt sensor](https://www.jaycar.com.au/arduino-compatible-tri-axis-digital-tilt-sensor/p/XC3732)
+- Female-to-female jumper wires (or wires appropriate for your headers)
 - USB cable for power and programming
 
 The XC3728 uses an SH1106 controller and its factory configuration is 4-wire
@@ -35,6 +36,29 @@ Disconnect USB power before making or changing connections.
 
 Use `3V3`, not `5V`, so the display power and ESP32-S3 logic levels are safely
 matched. `MOS` on this display means MOSI; no MISO wire is required.
+
+### XC3732 tap sensor
+
+The XC3732 header is labelled `INT1`, `INT2`, `SCL`, `SDA`, `+`, `-` from top
+to bottom when viewed as shown in Jaycar's product photo. Connect it as follows:
+
+| XC3732 label | ESP32-S3 connection | Purpose |
+| --- | --- | --- |
+| `+` | `3V3` | Sensor power |
+| `-` | `GND` | Common ground |
+| `SDA` | `GPIO 4` | I²C data |
+| `SCL` | `GPIO 5` | I²C clock |
+| `INT1` | `GPIO 6` | Single-tap interrupt |
+| `INT2` | Not connected | Unused interrupt output |
+
+The sensor is an MMA8452Q. Its firmware address is detected automatically at
+`0x1D` or `0x1C`. The firmware configures the sensor for single-pulse detection
+on all three axes. A tap toggles between the clock screen and the next-exam
+countdown screen; the previous automatic 30-second screen change is disabled.
+The module operates from 1.6–3.6 V, so use the ESP32-S3 `3V3` pin. The module's
+I²C bus should have pull-ups to 3V3; if your particular board revision does not
+already provide them, add one 4.7 kΩ resistor from `SDA` to `3V3` and another
+from `SCL` to `3V3`.
 
 ## First-time setup
 
@@ -100,6 +124,10 @@ switches to hours, minutes, and seconds. Once MATH1051 starts, the next exam
 screen automatically changes to ENGG1300. The schedule is stored in `kExams`
 near the top of `src/main.cpp`.
 
+Tap the connected XC3732 once to switch screens. The sensor's `INT1` output is
+used, so the tap is handled in hardware and does not depend on the display
+refresh interval.
+
 ## Changing the timezone
 
 Change `kTimezone` near the top of `src/main.cpp`. It uses POSIX timezone syntax,
@@ -116,6 +144,9 @@ rule rather than a fixed UTC offset.
   network. Check the credentials and signal.
 - **It stays on `SYNCING TIME`:** The network may be blocking NTP (UDP port 123)
   or may not have internet access. Serial output provides more detail.
+- **Tapping does nothing:** Check the XC3732 `+`, `-`, `SDA`, `SCL`, and `INT1`
+  connections. The serial monitor should report `MMA8452Q ready`; if it says
+  `not detected`, check the I²C wiring and any required 4.7 kΩ pull-ups.
 
 Jaycar's [XC3728 sample manual](https://media.jaycar.com.au/product/resources/XC3728_manualMain_92743.pdf)
 identifies the controller as SH1106. Espressif documents the official

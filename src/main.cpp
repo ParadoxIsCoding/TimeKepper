@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 #include <WiFi.h>
+#include <Wire.h>
 #include <ctype.h>
 #include <sys/time.h>
 #include <time.h>
@@ -21,10 +22,12 @@ constexpr uint8_t kOledDataPin = 11;
 constexpr uint8_t kOledResetPin = 8;
 constexpr uint8_t kOledDcPin = 9;
 constexpr uint8_t kOledCsPin = 10;
+constexpr uint8_t kSensorSdaPin = 4;
+constexpr uint8_t kSensorSclPin = 5;
+constexpr uint8_t kSensorInterruptPin = 6;
 
 constexpr char kTimezone[] = "AEST-10";  // Australia/Brisbane (no DST)
 constexpr unsigned long kDisplayIntervalMs = 100;
-constexpr unsigned long kScreenIntervalMs = 30000;
 constexpr unsigned long kReconnectIntervalMs = 30000;
 constexpr time_t kMinimumValidTime = 1704067200;  // 2024-01-01 UTC
 
@@ -50,9 +53,26 @@ U8G2_SH1106_128X64_NONAME_F_4W_SW_SPI oled(
 bool clockIsValid = false;
 bool clockSyncStarted = false;
 bool showExamScreen = false;
+bool tapSensorReady = false;
+uint8_t tapSensorAddress = 0;
+volatile bool tapInterruptPending = false;
 unsigned long lastDisplayUpdate = 0;
 unsigned long lastReconnectAttempt = 0;
-unsigned long lastScreenChange = 0;
+unsigned long lastTapHandled = 0;
+
+constexpr uint8_t kMmaWhoAmI = 0x0D;
+constexpr uint8_t kMmaPulseCfg = 0x21;
+constexpr uint8_t kMmaPulseSrc = 0x22;
+constexpr uint8_t kMmaPulseThsx = 0x23;
+constexpr uint8_t kMmaPulseThsy = 0x24;
+constexpr uint8_t kMmaPulseThsz = 0x25;
+constexpr uint8_t kMmaPulseTmLt = 0x26;
+constexpr uint8_t kMmaPulseLtcy = 0x27;
+constexpr uint8_t kMmaPulseWind = 0x28;
+constexpr uint8_t kMmaCtrlReg1 = 0x2A;
+constexpr uint8_t kMmaCtrlReg3 = 0x2C;
+constexpr uint8_t kMmaCtrlReg4 = 0x2D;
+constexpr uint8_t kMmaCtrlReg5 = 0x2E;
 
 void drawCentered(const char* text, int baseline) {
   const int width = oled.getStrWidth(text);
@@ -62,6 +82,92 @@ void drawCentered(const char* text, int baseline) {
 void makeUppercase(char* text) {
   for (char* character = text; *character != '\0'; ++character) {
     *character = static_cast<char>(toupper(*character));
+  }
+}
+
+void IRAM_ATTR onTapInterrupt() {
+  tapInterruptPending = true;
+}
+
+bool readSensorRegister(uint8_t address, uint8_t reg, uint8_t& value) {
+  Wire.beginTransmission(address);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0 || Wire.requestFrom(address, 1) != 1) {
+    return false;
+  }
+  value = Wire.read();
+  return true;
+}
+
+bool writeSensorRegister(uint8_t reg, uint8_t value) {
+  Wire.beginTransmission(tapSensorAddress);
+  Wire.write(reg);
+  Wire.write(value);
+  return Wire.endTransmission() == 0;
+}
+
+bool beginTapSensor() {
+  Wire.begin(kSensorSdaPin, kSensorSclPin, 100000);
+
+  for (const uint8_t address : {static_cast<uint8_t>(0x1D),
+                                static_cast<uint8_t>(0x1C)}) {
+    uint8_t identity = 0;
+    if (readSensorRegister(address, kMmaWhoAmI, identity) && identity == 0x2A) {
+      tapSensorAddress = address;
+      break;
+    }
+  }
+
+  if (tapSensorAddress == 0) {
+    return false;
+  }
+
+  // Configure the MMA8452Q pulse engine while in standby, then enable it.
+  if (!writeSensorRegister(kMmaCtrlReg1, 0x00) ||
+      !writeSensorRegister(kMmaPulseCfg, 0x15) ||
+      !writeSensorRegister(kMmaPulseThsx, 0x18) ||
+      !writeSensorRegister(kMmaPulseThsy, 0x18) ||
+      !writeSensorRegister(kMmaPulseThsz, 0x18) ||
+      !writeSensorRegister(kMmaPulseTmLt, 0x10) ||
+      !writeSensorRegister(kMmaPulseLtcy, 0x20) ||
+      !writeSensorRegister(kMmaPulseWind, 0x10) ||
+      !writeSensorRegister(kMmaCtrlReg3, 0x02) ||
+      !writeSensorRegister(kMmaCtrlReg4, 0x08) ||
+      !writeSensorRegister(kMmaCtrlReg5, 0x08) ||
+      !writeSensorRegister(kMmaCtrlReg1, 0x18)) {
+    tapSensorAddress = 0;
+    return false;
+  }
+
+  uint8_t ignored = 0;
+  readSensorRegister(tapSensorAddress, kMmaPulseSrc, ignored);
+  pinMode(kSensorInterruptPin, INPUT);
+  attachInterrupt(digitalPinToInterrupt(kSensorInterruptPin), onTapInterrupt,
+                  RISING);
+  return true;
+}
+
+void serviceTapSensor() {
+  if (!tapSensorReady) {
+    return;
+  }
+
+  bool pending = false;
+  noInterrupts();
+  pending = tapInterruptPending;
+  tapInterruptPending = false;
+  interrupts();
+
+  if (!pending || millis() - lastTapHandled < 250) {
+    return;
+  }
+
+  uint8_t pulseSource = 0;
+  if (readSensorRegister(tapSensorAddress, kMmaPulseSrc, pulseSource) &&
+      (pulseSource & 0x80) != 0) {
+    showExamScreen = !showExamScreen;
+    lastTapHandled = millis();
+    lastDisplayUpdate = 0;
   }
 }
 
@@ -112,9 +218,6 @@ void connectToWifi() {
       delay(100);
     }
     clockIsValid = currentTimeIsValid();
-    if (clockIsValid) {
-      lastScreenChange = millis();
-    }
     Serial.println(clockIsValid ? "Clock synchronized." : "Time sync timed out.");
   } else {
     Serial.println("Wi-Fi connection timed out; retrying in the background.");
@@ -242,7 +345,6 @@ void serviceWifi() {
     }
     if (!clockIsValid && currentTimeIsValid()) {
       clockIsValid = true;
-      lastScreenChange = millis();
       Serial.println("Clock synchronized.");
     }
     return;
@@ -266,6 +368,10 @@ void setup() {
   oled.begin();
   oled.setContrast(180);
   drawStatus("TIMEKEEPER", "Starting...");
+
+  tapSensorReady = beginTapSensor();
+  Serial.printf("Tap sensor: %s\n", tapSensorReady ? "MMA8452Q ready"
+                                                      : "not detected");
 
   if (!credentialsAreConfigured()) {
     Serial.println("Wi-Fi credentials are missing. Copy include/secrets.example.h "
@@ -298,10 +404,7 @@ void loop() {
     return;
   }
 
-  if (millis() - lastScreenChange >= kScreenIntervalMs) {
-    lastScreenChange = millis();
-    showExamScreen = !showExamScreen;
-  }
+  serviceTapSensor();
 
   if (millis() - lastDisplayUpdate >= kDisplayIntervalMs) {
     lastDisplayUpdate = millis();
