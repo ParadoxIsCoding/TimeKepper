@@ -123,6 +123,8 @@ bool beginTapSensor() {
   }
 
   if (tapSensorAddress == 0) {
+    Serial.printf("MMA8452Q not found on I2C SDA GPIO%u / SCL GPIO%u\n",
+                  kSensorSdaPin, kSensorSclPin);
     return false;
   }
 
@@ -140,7 +142,10 @@ bool beginTapSensor() {
       !writeSensorRegister(kMmaCtrlReg3, 0x02) ||
       !writeSensorRegister(kMmaCtrlReg4, 0x08) ||
       !writeSensorRegister(kMmaCtrlReg5, 0x08) ||
-      !writeSensorRegister(kMmaCtrlReg1, 0x18)) {
+      // CTRL_REG1 bit 0 is ACTIVE. 0x18 selects 100 Hz but leaves the IMU in
+      // standby; 0x19 selects 100 Hz and actually starts measurements.
+      !writeSensorRegister(kMmaCtrlReg1, 0x19)) {
+    Serial.println("MMA8452Q configuration failed.");
     tapSensorAddress = 0;
     return false;
   }
@@ -342,7 +347,12 @@ void drawExamCountdown() {
   oled.drawStr(128 - oled.getStrWidth(wifiText), 7, wifiText);
   oled.setFont(u8g2_font_helvB12_tf);
   drawCentered(exam->course, 24);
-  oled.setFont(days > 0 ? u8g2_font_helvB12_tf : u8g2_font_logisoso20_tn);
+  // Keep the course and date lines clear while using the available middle
+  // area for a more readable countdown. Keep a 3-pixel side margin.
+  oled.setFont(days > 0 ? u8g2_font_helvB14_tf : u8g2_font_logisoso24_tn);
+  if (oled.getStrWidth(countdownText) > 122) {
+    oled.setFont(days > 0 ? u8g2_font_helvB12_tf : u8g2_font_logisoso22_tn);
+  }
   drawCentered(countdownText, 49);
   oled.setFont(u8g2_font_5x8_tf);
   drawCentered(examDateText, 63);
@@ -405,6 +415,8 @@ void loop() {
   }
 
   serviceWifi();
+  // Keep the tap input responsive even while Wi-Fi/NTP is unavailable.
+  serviceTapSensor();
 
   if (!clockIsValid) {
     if (millis() - lastDisplayUpdate >= 1000) {
@@ -415,8 +427,6 @@ void loop() {
     delay(10);
     return;
   }
-
-  serviceTapSensor();
 
   if (millis() - lastDisplayUpdate >= kDisplayIntervalMs) {
     lastDisplayUpdate = millis();
