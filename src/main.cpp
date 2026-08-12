@@ -87,7 +87,7 @@ constexpr Exam kExams[] = {
 };
 
 U8G2_SH1106_128X64_NONAME_F_4W_SW_SPI oled(
-    U8G2_R0, kOledClockPin, kOledDataPin, kOledCsPin, kOledDcPin,
+    U8G2_R2, kOledClockPin, kOledDataPin, kOledCsPin, kOledDcPin,
     kOledResetPin);
 
 bool clockIsValid = false;

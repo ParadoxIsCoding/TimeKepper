@@ -179,7 +179,8 @@ rule rather than a fixed UTC offset.
 
 - **Screen stays blank:** Recheck all seven wires and especially `GND`, `VCC`,
   `RES`, and `CS`. Confirm the OLED is the XC3728/SH1106 model.
-- **Screen is upside down:** Change `U8G2_R0` to `U8G2_R2` in `src/main.cpp`.
+- **Screen orientation:** The firmware uses `U8G2_R2` because the OLED is
+  mounted upside down in its housing. Use `U8G2_R0` for an upright mounting.
 - **It says `SET UP WI-FI`:** Create `include/secrets.h` from the example file.
 - **It says `NO WI-FI`:** ESP32-S3 supports 2.4 GHz Wi-Fi, not a 5 GHz-only
   network. Check the credentials and signal.
