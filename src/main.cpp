@@ -29,6 +29,7 @@ constexpr uint8_t kSensorInterruptPin = 6;
 constexpr char kTimezone[] = "AEST-10";  // Australia/Brisbane (no DST)
 constexpr unsigned long kDisplayIntervalMs = 100;
 constexpr unsigned long kReconnectIntervalMs = 30000;
+constexpr unsigned long kTapPollIntervalMs = 20;
 constexpr time_t kMinimumValidTime = 1704067200;  // 2024-01-01 UTC
 
 struct Exam {
@@ -58,6 +59,7 @@ uint8_t tapSensorAddress = 0;
 volatile bool tapInterruptPending = false;
 unsigned long lastDisplayUpdate = 0;
 unsigned long lastReconnectAttempt = 0;
+unsigned long lastTapPoll = 0;
 unsigned long lastTapHandled = 0;
 
 constexpr uint8_t kMmaWhoAmI = 0x0D;
@@ -92,7 +94,9 @@ void IRAM_ATTR onTapInterrupt() {
 bool readSensorRegister(uint8_t address, uint8_t reg, uint8_t& value) {
   Wire.beginTransmission(address);
   Wire.write(reg);
-  if (Wire.endTransmission(false) != 0 || Wire.requestFrom(address, 1) != 1) {
+  if (Wire.endTransmission(false) != 0 ||
+      Wire.requestFrom(static_cast<uint8_t>(address),
+                       static_cast<uint8_t>(1)) != 1) {
     return false;
   }
   value = Wire.read();
@@ -124,7 +128,9 @@ bool beginTapSensor() {
 
   // Configure the MMA8452Q pulse engine while in standby, then enable it.
   if (!writeSensorRegister(kMmaCtrlReg1, 0x00) ||
-      !writeSensorRegister(kMmaPulseCfg, 0x15) ||
+      // ELE latches the event until PULSE_SRC is read. The lower bits enable
+      // single-pulse detection on X, Y, and Z.
+      !writeSensorRegister(kMmaPulseCfg, 0x55) ||
       !writeSensorRegister(kMmaPulseThsx, 0x18) ||
       !writeSensorRegister(kMmaPulseThsy, 0x18) ||
       !writeSensorRegister(kMmaPulseThsz, 0x18) ||
@@ -144,6 +150,7 @@ bool beginTapSensor() {
   pinMode(kSensorInterruptPin, INPUT);
   attachInterrupt(digitalPinToInterrupt(kSensorInterruptPin), onTapInterrupt,
                   RISING);
+  Serial.printf("MMA8452Q detected at I2C address 0x%02X\n", tapSensorAddress);
   return true;
 }
 
@@ -152,21 +159,26 @@ void serviceTapSensor() {
     return;
   }
 
+  const unsigned long now = millis();
   bool pending = false;
   noInterrupts();
   pending = tapInterruptPending;
   tapInterruptPending = false;
   interrupts();
 
-  if (!pending || millis() - lastTapHandled < 250) {
+  // INT1 gives an immediate notification, while polling PULSE_SRC keeps the
+  // sensor usable if INT1 is miswired or omitted. PULSE_SRC is latched by ELE
+  // in PULSE_CFG and is cleared by this read.
+  if (!pending && now - lastTapPoll < kTapPollIntervalMs) {
     return;
   }
+  lastTapPoll = now;
 
   uint8_t pulseSource = 0;
   if (readSensorRegister(tapSensorAddress, kMmaPulseSrc, pulseSource) &&
-      (pulseSource & 0x80) != 0) {
+      (pulseSource & 0x80) != 0 && now - lastTapHandled >= 250) {
     showExamScreen = !showExamScreen;
-    lastTapHandled = millis();
+    lastTapHandled = now;
     lastDisplayUpdate = 0;
   }
 }

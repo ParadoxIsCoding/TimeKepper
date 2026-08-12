@@ -124,9 +124,10 @@ switches to hours, minutes, and seconds. Once MATH1051 starts, the next exam
 screen automatically changes to ENGG1300. The schedule is stored in `kExams`
 near the top of `src/main.cpp`.
 
-Tap the connected XC3732 once to switch screens. The sensor's `INT1` output is
-used, so the tap is handled in hardware and does not depend on the display
-refresh interval.
+Tap the connected XC3732 once to switch screens. The firmware uses `INT1` for
+an immediate notification and also polls the latched pulse status over I²C, so
+it can still detect a tap if the interrupt wire is missing. The display refresh
+interval does not determine whether a tap is detected.
 
 ## Changing the timezone
 
@@ -144,9 +145,12 @@ rule rather than a fixed UTC offset.
   network. Check the credentials and signal.
 - **It stays on `SYNCING TIME`:** The network may be blocking NTP (UDP port 123)
   or may not have internet access. Serial output provides more detail.
-- **Tapping does nothing:** Check the XC3732 `+`, `-`, `SDA`, `SCL`, and `INT1`
-  connections. The serial monitor should report `MMA8452Q ready`; if it says
-  `not detected`, check the I²C wiring and any required 4.7 kΩ pull-ups.
+- **Tapping does nothing:** The serial monitor should report `MMA8452Q ready`
+  and its detected I²C address. If it says `not detected`, check `+`, `-`,
+  `SDA`, and `SCL` first, including any required 4.7 kΩ pull-ups. If it is
+  ready, tap the sensor board firmly once and make sure it is powered from
+  `3V3`; `INT1` is recommended but the current firmware also has an I²C polling
+  fallback.
 
 Jaycar's [XC3728 sample manual](https://media.jaycar.com.au/product/resources/XC3728_manualMain_92743.pdf)
 identifies the controller as SH1106. Espressif documents the official
