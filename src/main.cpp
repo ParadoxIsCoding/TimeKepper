@@ -269,9 +269,11 @@ void drawClock() {
   oled.drawStr(0, 7, dateText);
   oled.drawStr(128 - oled.getStrWidth(wifiText), 7, wifiText);
   drawCentered("DAY COMPLETE", 15);
-  oled.setFont(u8g2_font_logisoso20_tn);
+  // Use the full font so the trailing percent sign is rendered; the numeric
+  // variant silently omits that glyph.
+  oled.setFont(u8g2_font_logisoso20_tf);
   if (oled.getStrWidth(progressText) > 124) {
-    oled.setFont(u8g2_font_logisoso18_tn);
+    oled.setFont(u8g2_font_logisoso18_tf);
   }
   drawCentered(progressText, 37);
   oled.drawFrame(3, 40, 122, 7);
@@ -345,16 +347,30 @@ void drawExamCountdown() {
   oled.setFont(u8g2_font_5x8_tf);
   oled.drawStr(0, 7, "NEXT EXAM");
   oled.drawStr(128 - oled.getStrWidth(wifiText), 7, wifiText);
-  oled.setFont(u8g2_font_helvB12_tf);
-  drawCentered(exam->course, 24);
-  // Keep the course and date lines clear while using the available middle
-  // area for a more readable countdown. Keep a 3-pixel side margin.
-  oled.setFont(days > 0 ? u8g2_font_helvB14_tf : u8g2_font_logisoso24_tn);
-  if (oled.getStrWidth(countdownText) > 122) {
-    oled.setFont(days > 0 ? u8g2_font_helvB12_tf : u8g2_font_logisoso22_tn);
+  // Visual priority: countdown, exam date, then course name.
+  oled.setFont(u8g2_font_helvB08_tf);
+  drawCentered(exam->course, 17);
+
+  if (days > 0) {
+    oled.setFont(u8g2_font_helvB18_tf);
+    if (oled.getStrWidth(countdownText) > 122) {
+      oled.setFont(u8g2_font_helvB14_tf);
+    }
+    if (oled.getStrWidth(countdownText) > 122) {
+      oled.setFont(u8g2_font_helvB12_tf);
+    }
+  } else {
+    oled.setFont(u8g2_font_logisoso26_tn);
+    if (oled.getStrWidth(countdownText) > 122) {
+      oled.setFont(u8g2_font_logisoso24_tn);
+    }
+    if (oled.getStrWidth(countdownText) > 122) {
+      oled.setFont(u8g2_font_logisoso22_tn);
+    }
   }
-  drawCentered(countdownText, 49);
-  oled.setFont(u8g2_font_5x8_tf);
+  drawCentered(countdownText, 43);
+
+  oled.setFont(u8g2_font_6x12_tf);
   drawCentered(examDateText, 63);
   oled.sendBuffer();
 }

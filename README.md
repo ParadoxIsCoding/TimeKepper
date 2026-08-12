@@ -109,9 +109,9 @@ The alternate screen automatically advances to the next future exam:
 
 ```text
 NEXT EXAM                  WiFi
-             MATH1051
-          37d 14h 22m
-      SAT 19 SEP 08:00 AM
+              MATH1051
+        37d 14h 22m
+    SAT 19 SEP 08:00 AM
 ```
 
 The configured Brisbane exam schedule is:
@@ -119,10 +119,11 @@ The configured Brisbane exam schedule is:
 - MATH1051 — Saturday 19 September 2026 at 8:00 AM
 - ENGG1300 — Saturday 19 September 2026 at 2:00 PM
 
-The countdown shows days, hours, and minutes until the final 24 hours, when it
-switches to hours, minutes, and seconds. Once MATH1051 starts, the next exam
-screen automatically changes to ENGG1300. The schedule is stored in `kExams`
-near the top of `src/main.cpp`.
+The countdown is the largest element on this screen, followed by the exam date
+and then the course name. It shows days, hours, and minutes until the final 24
+hours, when it switches to hours, minutes, and seconds. Once MATH1051 starts,
+the next exam screen automatically changes to ENGG1300. The schedule is stored
+in `kExams` near the top of `src/main.cpp`.
 
 Tap the connected XC3732 once to switch screens. The firmware uses `INT1` for
 an immediate notification and also polls the latched pulse status over I²C, so
