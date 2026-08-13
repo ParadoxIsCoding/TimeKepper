@@ -1,28 +1,53 @@
 # TimeKeeper
 
-An ESP32-S3 N16R8 clock for the Jaycar XC3728 128 x 64 OLED. It gets the
-current time from internet time servers, shows 12-hour time with seconds and
-AM/PM, and displays the percentage of the local day completed above the clock
-to three decimal places. Tapping the connected XC3732 sensor cycles between the
-clock, the next scheduled exam, and current local weather.
+TimeKeeper is a desk clock built on an ESP32-S3 and a 128x64 OLED. It syncs
+time over Wi-Fi, shows a live "percentage of the day completed" readout, and
+cycles between a clock, an exam countdown, and a local weather screen with a
+single tap on an attached accelerometer.
 
-The firmware is configured for Brisbane time (`AEST-10`, UTC+10 with no daylight
-saving).
+<p align="center">
+  <code>WED 12 AUG   WiFi</code><br>
+  <code>DAY COMPLETE</code><br>
+  <code>42.123%</code><br>
+  <code>██████████░░░░░░░░░░░░</code><br>
+  <code>10:06:34 AM</code>
+</p>
+
+## Features
+
+- **Live day-progress clock** — 12-hour time with seconds, plus the percent
+  of the day elapsed to three decimal places and a progress bar.
+- **Exam countdown** — automatically advances through a configured exam
+  schedule, switching from a days/hours/minutes countdown to hours/minutes/seconds
+  inside the final 24 hours.
+- **Local weather** — current conditions plus daily low/high and rain chance,
+  from [Open-Meteo](https://open-meteo.com/en/docs).
+- **Tap-to-cycle screens** — a single tap on the attached accelerometer
+  switches between the clock, exam, and weather screens.
+- **Quiet-hours display sleep** — the OLED dims and eventually powers off
+  overnight when there's no vibration nearby, and wakes instantly on the
+  next tap or nearby activity.
+- **Resilient networking** — keeps time locally through Wi-Fi drops,
+  auto-reconnects, and shows clear on-screen status (`SYNCING TIME`,
+  `NO WI-FI`, `----`, `STALE`) instead of failing silently.
 
 ## Hardware
 
-- ESP32-S3 DevKitC-1 with an N16R8 module (16 MB flash, 8 MB PSRAM)
-- [Jaycar XC3728 1.3-inch 128 x 64 OLED](https://www.jaycar.com.au/duinotech-arduino-compatible-1-3-inch-monochrome-oled-display/p/XC3728)
-- [Jaycar XC3732 MMA8452Q tri-axis digital tilt sensor](https://www.jaycar.com.au/arduino-compatible-tri-axis-digital-tilt-sensor/p/XC3732)
-- Female-to-female jumper wires (or wires appropriate for your headers)
-- USB cable for power and programming
+| Part | Notes |
+| --- | --- |
+| ESP32-S3 DevKitC-1 (N16R8) | 16 MB flash, 8 MB PSRAM |
+| [Jaycar XC3728](https://www.jaycar.com.au/duinotech-arduino-compatible-1-3-inch-monochrome-oled-display/p/XC3728) 1.3" 128x64 OLED | SH1106 controller, 4-wire SPI |
+| [Jaycar XC3732](https://www.jaycar.com.au/arduino-compatible-tri-axis-digital-tilt-sensor/p/XC3732) tri-axis tilt sensor | MMA8452Q, I²C |
+| Female-to-female jumper wires | Or wires appropriate for your headers |
+| USB cable | Power and programming |
 
-The XC3728 uses an SH1106 controller and its factory configuration is 4-wire
-SPI. The labels are printed beside its seven-pin header.
+The XC3728's labels are printed beside its seven-pin header.
 
 ## Wiring
 
-Disconnect USB power before making or changing connections.
+> **Disconnect USB power before making or changing connections.**
+
+### OLED (XC3728)
 
 | XC3728 label | ESP32-S3 connection | Purpose |
 | --- | --- | --- |
@@ -34,13 +59,13 @@ Disconnect USB power before making or changing connections.
 | `DC` | `GPIO 9` | Data/command select |
 | `CS` | `GPIO 10` | Chip select |
 
-Use `3V3`, not `5V`, so the display power and ESP32-S3 logic levels are safely
-matched. `MOS` on this display means MOSI; no MISO wire is required.
+Use `3V3`, not `5V`, so the display power and ESP32-S3 logic levels are
+safely matched. `MOS` on this display means MOSI; no MISO wire is required.
 
-### XC3732 tap sensor
+### Tap sensor (XC3732)
 
 The XC3732 header is labelled `INT1`, `INT2`, `SCL`, `SDA`, `+`, `-` from top
-to bottom when viewed as shown in Jaycar's product photo. Connect it as follows:
+to bottom when viewed as shown in Jaycar's product photo.
 
 | XC3732 label | ESP32-S3 connection | Purpose |
 | --- | --- | --- |
@@ -51,48 +76,60 @@ to bottom when viewed as shown in Jaycar's product photo. Connect it as follows:
 | `INT1` | `GPIO 6` | Single-tap interrupt |
 | `INT2` | Not connected | Unused interrupt output |
 
-The sensor is an MMA8452Q. Its firmware address is detected automatically at
-`0x1D` or `0x1C`. The firmware configures the sensor for single-pulse detection
-on all three axes. A tap cycles through the clock, next-exam countdown, and
-weather screens; the previous automatic 30-second screen change is disabled.
-The firmware also samples the accelerometer for lighter vibration used by the
-quiet-hours display sleep feature.
-The module operates from 1.6–3.6 V, so use the ESP32-S3 `3V3` pin. The module's
-I²C bus should have pull-ups to 3V3; if your particular board revision does not
-already provide them, add one 4.7 kΩ resistor from `SDA` to `3V3` and another
-from `SCL` to `3V3`.
+The sensor is an MMA8452Q; its I²C address is detected automatically at
+`0x1D` or `0x1C`. It's configured for single-pulse detection on all three
+axes, and is also sampled continuously for the lighter vibration used by the
+quiet-hours display sleep feature. The module operates from 1.6–3.6 V, so use
+the ESP32-S3 `3V3` pin. Its I²C bus should have pull-ups to 3V3; if your
+board revision doesn't already provide them, add a 4.7 kΩ resistor from
+`SDA` to `3V3` and another from `SCL` to `3V3`.
 
-## First-time setup
+## Getting started
 
 1. Install [Visual Studio Code](https://code.visualstudio.com/) and the
    [PlatformIO IDE extension](https://platformio.org/install/ide?install=vscode).
 2. Open this folder in VS Code.
-3. Copy `include/secrets.example.h` to `include/secrets.h`.
-4. Put your 2.4 GHz Wi-Fi name and password in `include/secrets.h`:
+3. Copy `include/secrets.example.h` to `include/secrets.h` and add your
+   2.4 GHz Wi-Fi credentials:
 
    ```cpp
    #define WIFI_SSID "My Wi-Fi"
    #define WIFI_PASSWORD "my-password"
    ```
 
-   `include/secrets.h` is ignored by Git, so credentials will not be committed.
-5. Connect the ESP32-S3 by USB, then use PlatformIO's **Upload** action.
-6. If upload does not start, hold **BOOT**, tap **RESET**, release **BOOT**, and
-   upload again.
+   `include/secrets.h` is ignored by Git, so credentials are never committed.
+4. Connect the ESP32-S3 by USB, then use PlatformIO's **Upload** action.
+5. If upload doesn't start, hold **BOOT**, tap **RESET**, release **BOOT**,
+   and upload again.
 
-From a terminal, the equivalent commands are:
+The equivalent terminal commands:
 
 ```sh
-pio run
-pio run --target upload
-pio device monitor
+pio run                    # build
+pio run --target upload    # flash
+pio device monitor         # serial monitor, 115200 baud
 ```
 
-The serial monitor runs at 115200 baud. On startup, the display reports Wi-Fi
-and time-sync status. After a successful sync it continues keeping time if Wi-Fi
-temporarily drops, and attempts to reconnect every 30 seconds.
+On startup, the display reports Wi-Fi and time-sync status. After a
+successful sync it keeps time locally through temporary Wi-Fi drops and
+retries reconnecting every 30 seconds.
 
-## Display layout
+### Running the unit tests
+
+The day-progress calculation has native (no-hardware) unit tests:
+
+```sh
+pio test -e native
+```
+
+## Usage
+
+Tap the connected XC3732 once to advance to the next screen. The firmware
+uses `INT1` for an immediate notification and also polls the latched pulse
+status over I²C, so a tap is still detected even if the interrupt wire is
+missing.
+
+### Clock
 
 ```text
 WED 12 AUG                 WiFi
@@ -103,11 +140,11 @@ WED 12 AUG                 WiFi
 ```
 
 The percentage includes fractions of a second, so the three-decimal value
-updates smoothly and is calculated from local Brisbane time. The progress bar
-provides a quick visual indication of the day completed, and the top-right
-status changes to `----` whenever Wi-Fi is disconnected.
+updates smoothly. The progress bar gives a quick visual sense of the day
+completed, and the top-right status changes to `----` whenever Wi-Fi is
+disconnected.
 
-The alternate screen automatically advances to the next future exam:
+### Exam countdown
 
 ```text
 NEXT EXAM                  WiFi
@@ -116,18 +153,12 @@ NEXT EXAM                  WiFi
     SAT 19 SEP 08:00 AM
 ```
 
-The configured Brisbane exam schedule is:
+The countdown is the largest element on screen, followed by the exam date
+and course name. It shows days/hours/minutes until the final 24 hours, then
+switches to hours/minutes/seconds. Once an exam starts, this screen
+automatically advances to the next one in the schedule.
 
-- MATH1051 — Saturday 19 September 2026 at 8:00 AM
-- ENGG1300 — Saturday 19 September 2026 at 2:00 PM
-
-The countdown is the largest element on this screen, followed by the exam date
-and then the course name. It shows days, hours, and minutes until the final 24
-hours, when it switches to hours, minutes, and seconds. Once MATH1051 starts,
-the next exam screen automatically changes to ENGG1300. The schedule is stored
-in `kExams` near the top of `src/main.cpp`.
-
-The third screen shows current weather for the privately configured location:
+### Weather
 
 ```text
 WEATHER                   WiFi
@@ -137,68 +168,72 @@ WEATHER                   WiFi
             RAIN 35%
 ```
 
-Weather data comes from [Open-Meteo](https://open-meteo.com/en/docs) and
-refreshes every five minutes. The location-specific API URL belongs in the
-ignored `include/secrets.h` as `WEATHER_API_URL`, keeping it out of tracked
-source and documentation. Use an `http://api.open-meteo.com/v1/forecast?...`
-URL containing `current=temperature_2m,weather_code` and the daily variables
-`temperature_2m_max,temperature_2m_min,precipitation_probability_max`.
+Shows current temperature and conditions alongside the day's forecast
+minimum, maximum, and maximum precipitation probability, refreshed every
+five minutes. A failed refresh keeps the last good reading and shows `STALE`
+once it's more than 30 minutes old; before the first successful reading,
+request errors are shown instead of leaving the screen on `LOADING...`.
+Failed requests retry every 30 seconds.
 
-Current temperature and conditions are shown with the day's forecast minimum,
-maximum, and maximum precipitation probability. A failed refresh retains the
-last good reading; the screen displays `STALE` once that reading is more than
-30 minutes old. Before the first successful reading, request errors are shown
-on the display instead of leaving it on `LOADING...`. Failed requests retry
-every 30 seconds.
+## Configuration
 
-Tap the connected XC3732 once to advance to the next screen. The firmware uses
-`INT1` for an immediate notification and also polls the latched pulse status
-over I²C, so it can still detect a tap if the interrupt wire is missing. The
-display refresh interval does not determine whether a tap is detected.
+Everything below is a constant near the top of `src/main.cpp`.
 
-## Quiet-hours display sleep
+| Setting | Constant | Notes |
+| --- | --- | --- |
+| Timezone | `kTimezone` | POSIX timezone syntax, not an IANA city name. Locations with daylight saving need a full POSIX rule, not just a fixed UTC offset. Defaults to `AEST-10` (Brisbane, UTC+10, no DST). |
+| Exam schedule | `kExams` | Array of `{course, year, month, day, hour, minute}` entries in local time. Keep them in chronological order — the countdown logic returns the first future entry, it doesn't sort. |
+| Weather location | `WEATHER_API_URL` in `include/secrets.h` | An `http://api.open-meteo.com/v1/forecast?...` URL containing `current=temperature_2m,weather_code` and the daily variables `temperature_2m_max,temperature_2m_min,precipitation_probability_max`. Kept out of tracked source since it encodes your location. |
+| Quiet hours | `kSleepStartHour`, `kSleepEndHour` | Default 10:00 PM–5:00 AM local time. |
+| Display dimming | `kDisplayDimDelayMs`, `kDisplayDimRampMs`, `kDisplaySleepDelayMs`, `kNightDimContrast` | During quiet hours the display stays at full brightness until the dim delay, fades to the night contrast level over the ramp duration, then fully powers off at the sleep delay — all measured from the last detected vibration. |
+| Vibration sensitivity | `kVibrationThresholdCounts` | Increase if background vibration prevents dimming/sleep; decrease if nearby activity doesn't reliably wake the display. |
+| Screen orientation | `U8G2_R2` in the `oled` constructor | Set for an upside-down enclosure mount. Use `U8G2_R0` for an upright mounting. |
 
-From 10:00 PM until 5:00 AM Brisbane time, the OLED dims and eventually turns
-off after periods without vibration. It stays at full brightness for five
-minutes after the last vibration, then its contrast fades down over the next
-two minutes to a faint night level, and finally powers off once fifteen
-minutes have passed without vibration. Keyboard activity, moving the desk, or
-tapping the sensor immediately restores full brightness and restarts the
-timers. Only the display is affected: the ESP32 continues keeping time,
-refreshing weather, maintaining Wi-Fi, and monitoring the sensor. At 5:00 AM
-the OLED returns to full brightness automatically.
+Quiet-hours dimming in detail: the OLED stays at full brightness for five
+minutes after the last vibration, fades over the next two minutes to a faint
+night level, and powers off once fifteen minutes have passed without
+vibration. Any vibration — typing nearby, moving the desk, tapping the
+sensor — immediately restores full brightness and restarts the timers. Only
+the display is affected: the ESP32 keeps time, refreshes weather, maintains
+Wi-Fi, and monitors the sensor throughout. At the configured wake hour the
+OLED returns to full brightness automatically.
 
-The dimming and sleep timings are set by `kDisplayDimDelayMs`,
-`kDisplayDimRampMs`, and `kDisplaySleepDelayMs` in `src/main.cpp`, and the
-faint night brightness by `kNightDimContrast`. The vibration sensitivity is
-set by `kVibrationThresholdCounts`. Increase it if normal background
-vibration prevents dimming/sleep, or decrease it if keyboard activity does
-not restore brightness reliably.
+Any configuration change requires re-flashing the board
+(`pio run --target upload`).
 
-## Changing the timezone
+## Project structure
 
-Change `kTimezone` near the top of `src/main.cpp`. It uses POSIX timezone syntax,
-not an IANA city name. For locations with daylight saving, use a complete POSIX
-rule rather than a fixed UTC offset.
+```text
+include/secrets.example.h   Template for Wi-Fi/weather credentials
+include/secrets.h           Your credentials (git-ignored)
+lib/day_progress/           Day-progress percentage calculation
+src/main.cpp                Firmware: display, sensors, networking
+test/test_day_progress/     Native unit tests (pio test -e native)
+platformio.ini              Build configuration
+```
 
 ## Troubleshooting
 
-- **Screen stays blank:** Recheck all seven wires and especially `GND`, `VCC`,
+- **Screen stays blank:** Recheck all seven wires, especially `GND`, `VCC`,
   `RES`, and `CS`. Confirm the OLED is the XC3728/SH1106 model.
-- **Screen orientation:** The firmware uses `U8G2_R2` because the OLED is
-  mounted upside down in its housing. Use `U8G2_R0` for an upright mounting.
-- **It says `SET UP WI-FI`:** Create `include/secrets.h` from the example file.
-- **It says `NO WI-FI`:** ESP32-S3 supports 2.4 GHz Wi-Fi, not a 5 GHz-only
-  network. Check the credentials and signal.
-- **It stays on `SYNCING TIME`:** The network may be blocking NTP (UDP port 123)
-  or may not have internet access. Serial output provides more detail.
-- **Tapping does nothing:** The serial monitor should report `MMA8452Q ready`
-  and its detected I²C address. If it says `not detected`, check `+`, `-`,
-  `SDA`, and `SCL` first, including any required 4.7 kΩ pull-ups. If it is
-  ready, tap the sensor board firmly once and make sure it is powered from
-  `3V3`; `INT1` is recommended but the current firmware also has an I²C polling
-  fallback.
+- **Screen orientation is wrong:** The firmware uses `U8G2_R2` because the
+  OLED is mounted upside down in its housing. Use `U8G2_R0` for an upright
+  mounting.
+- **It says `SET UP WI-FI`:** Create `include/secrets.h` from the example
+  file.
+- **It says `NO WI-FI`:** The ESP32-S3 supports 2.4 GHz Wi-Fi, not a
+  5 GHz-only network. Check the credentials and signal.
+- **It stays on `SYNCING TIME`:** The network may be blocking NTP (UDP port
+  123) or may not have internet access. Serial output has more detail.
+- **Tapping does nothing:** The serial monitor should report
+  `MMA8452Q ready` and the detected I²C address. If it says `not detected`,
+  check `+`, `-`, `SDA`, and `SCL` first, including any required 4.7 kΩ
+  pull-ups. If it is ready, tap the sensor board firmly once and make sure
+  it's powered from `3V3`; `INT1` is recommended but the firmware also has
+  an I²C polling fallback.
 
-Jaycar's [XC3728 sample manual](https://media.jaycar.com.au/product/resources/XC3728_manualMain_92743.pdf)
-identifies the controller as SH1106. Espressif documents the official
-[ESP32-S3 DevKitC-1 pin layout](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/user_guide_v1.1.html).
+## References
+
+- Jaycar's [XC3728 sample manual](https://media.jaycar.com.au/product/resources/XC3728_manualMain_92743.pdf)
+  identifies the controller as SH1106.
+- Espressif's [ESP32-S3 DevKitC-1 pin layout](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/user_guide_v1.1.html).
