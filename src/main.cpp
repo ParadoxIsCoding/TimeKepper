@@ -37,6 +37,7 @@ constexpr unsigned long kDisplayIntervalMs = 100;
 constexpr unsigned long kReconnectIntervalMs = 30000;
 constexpr unsigned long kTapPollIntervalMs = 20;
 constexpr unsigned long kVibrationPollIntervalMs = 50;
+constexpr unsigned long kDisplaySleepPollIntervalMs = 250;
 // Quiet-hours display: full brightness until kDisplayDimDelayMs of no
 // vibration, then contrast ramps down to kNightDimContrast over
 // kDisplayDimRampMs, then the panel fully sleeps at kDisplaySleepDelayMs.
@@ -116,6 +117,7 @@ unsigned long lastReconnectAttempt = 0;
 unsigned long lastTapPoll = 0;
 unsigned long lastTapHandled = 0;
 unsigned long lastVibrationPoll = 0;
+unsigned long lastDisplaySleepPoll = 0;
 unsigned long lastVibrationDetected = 0;
 unsigned long lastWeatherAttempt = 0;
 int16_t previousAccelerationX = 0;
@@ -326,6 +328,10 @@ void serviceDisplaySleep() {
   }
 
   const unsigned long now = millis();
+  if (now - lastDisplaySleepPoll < kDisplaySleepPollIntervalMs) {
+    return;
+  }
+  lastDisplaySleepPoll = now;
 
   if (!quietHoursAreActive()) {
     if (displaySleeping) {
@@ -722,14 +728,14 @@ void serviceWifi() {
     return;
   }
 
+  // WiFi.setAutoReconnect(true) (set in setup()) already retries the
+  // connection in the background; this just logs it periodically.
   if (millis() - lastReconnectAttempt < kReconnectIntervalMs) {
     return;
   }
 
   lastReconnectAttempt = millis();
-  Serial.println("Wi-Fi disconnected; reconnecting...");
-  WiFi.disconnect();
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.println("Wi-Fi disconnected; auto-reconnect in progress...");
 }
 }  // namespace
 
