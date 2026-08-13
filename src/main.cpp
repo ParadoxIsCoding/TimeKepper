@@ -37,7 +37,14 @@ constexpr unsigned long kDisplayIntervalMs = 100;
 constexpr unsigned long kReconnectIntervalMs = 30000;
 constexpr unsigned long kTapPollIntervalMs = 20;
 constexpr unsigned long kVibrationPollIntervalMs = 50;
-constexpr unsigned long kDisplayWakeDurationMs = 5UL * 60UL * 1000UL;
+// Quiet-hours display: full brightness until kDisplayDimDelayMs of no
+// vibration, then contrast ramps down to kNightDimContrast over
+// kDisplayDimRampMs, then the panel fully sleeps at kDisplaySleepDelayMs.
+constexpr unsigned long kDisplayDimDelayMs = 5UL * 60UL * 1000UL;
+constexpr unsigned long kDisplayDimRampMs = 2UL * 60UL * 1000UL;
+constexpr unsigned long kDisplaySleepDelayMs = 15UL * 60UL * 1000UL;
+constexpr uint8_t kFullContrast = 180;
+constexpr uint8_t kNightDimContrast = 1;
 constexpr unsigned long kWeatherRefreshIntervalMs = 5UL * 60UL * 1000UL;
 constexpr unsigned long kWeatherRetryIntervalMs = 30UL * 1000UL;
 constexpr unsigned long kWeatherStaleIntervalMs = 30UL * 60UL * 1000UL;
@@ -100,6 +107,7 @@ WeatherRequestState weatherRequestState = WeatherRequestState::NotStarted;
 char weatherErrorText[18] = "";
 bool tapSensorReady = false;
 bool displaySleeping = false;
+uint8_t currentContrast = kFullContrast;
 bool accelerationSampleReady = false;
 uint8_t tapSensorAddress = 0;
 volatile bool tapInterruptPending = false;
@@ -304,25 +312,61 @@ bool quietHoursAreActive() {
          localTime.tm_hour < kSleepEndHour;
 }
 
+void setContrast(uint8_t contrast) {
+  if (contrast == currentContrast) {
+    return;
+  }
+  currentContrast = contrast;
+  oled.setContrast(contrast);
+}
+
 void serviceDisplaySleep() {
   if (!clockIsValid) {
     return;
   }
 
   const unsigned long now = millis();
-  const bool recentVibration =
-      lastVibrationDetected != 0 &&
-      now - lastVibrationDetected < kDisplayWakeDurationMs;
-  const bool shouldSleep = quietHoursAreActive() && !recentVibration;
-  if (shouldSleep == displaySleeping) {
+
+  if (!quietHoursAreActive()) {
+    if (displaySleeping) {
+      displaySleeping = false;
+      oled.setPowerSave(0);
+      lastDisplayUpdate = 0;
+      Serial.println("Quiet-hours display sleep: OFF");
+    }
+    setContrast(kFullContrast);
     return;
   }
 
-  displaySleeping = shouldSleep;
-  oled.setPowerSave(displaySleeping ? 1 : 0);
-  lastDisplayUpdate = 0;
-  Serial.printf("Quiet-hours display sleep: %s\n",
-                displaySleeping ? "ON" : "OFF");
+  // Never having seen vibration this boot is treated as fully idle, matching
+  // the pre-dimming behaviour of sleeping immediately in quiet hours.
+  const unsigned long sinceVibration = lastVibrationDetected == 0
+                                            ? kDisplaySleepDelayMs
+                                            : now - lastVibrationDetected;
+  const bool shouldSleep = sinceVibration >= kDisplaySleepDelayMs;
+  if (shouldSleep != displaySleeping) {
+    displaySleeping = shouldSleep;
+    oled.setPowerSave(displaySleeping ? 1 : 0);
+    lastDisplayUpdate = 0;
+    Serial.printf("Quiet-hours display sleep: %s\n",
+                  displaySleeping ? "ON" : "OFF");
+  }
+  if (displaySleeping) {
+    return;
+  }
+
+  if (sinceVibration <= kDisplayDimDelayMs) {
+    setContrast(kFullContrast);
+  } else if (sinceVibration >= kDisplayDimDelayMs + kDisplayDimRampMs) {
+    setContrast(kNightDimContrast);
+  } else {
+    const float rampProgress =
+        static_cast<float>(sinceVibration - kDisplayDimDelayMs) /
+        static_cast<float>(kDisplayDimRampMs);
+    setContrast(kFullContrast - static_cast<uint8_t>(
+                                    rampProgress *
+                                    (kFullContrast - kNightDimContrast)));
+  }
 }
 
 void drawStatus(const char* heading, const char* detail) {
@@ -694,7 +738,7 @@ void setup() {
   delay(200);
 
   oled.begin();
-  oled.setContrast(180);
+  oled.setContrast(kFullContrast);
   drawStatus("TIMEKEEPER", "Starting...");
 
   tapSensorReady = beginTapSensor();

@@ -158,16 +158,22 @@ display refresh interval does not determine whether a tap is detected.
 
 ## Quiet-hours display sleep
 
-From 10:00 PM until 5:00 AM Brisbane time, the OLED turns off after five
-minutes without vibration. Keyboard activity, moving the desk, or tapping the
-sensor wakes it and every new vibration restarts the five-minute timer. Only
-the display is turned off: the ESP32 continues keeping time, refreshing
-weather, maintaining Wi-Fi, and monitoring the sensor. At 5:00 AM the OLED
-turns on automatically.
+From 10:00 PM until 5:00 AM Brisbane time, the OLED dims and eventually turns
+off after periods without vibration. It stays at full brightness for five
+minutes after the last vibration, then its contrast fades down over the next
+two minutes to a faint night level, and finally powers off once fifteen
+minutes have passed without vibration. Keyboard activity, moving the desk, or
+tapping the sensor immediately restores full brightness and restarts the
+timers. Only the display is affected: the ESP32 continues keeping time,
+refreshing weather, maintaining Wi-Fi, and monitoring the sensor. At 5:00 AM
+the OLED returns to full brightness automatically.
 
-The vibration sensitivity is set by `kVibrationThresholdCounts` in
-`src/main.cpp`. Increase it if normal background vibration prevents sleep, or
-decrease it if keyboard activity does not wake the display reliably.
+The dimming and sleep timings are set by `kDisplayDimDelayMs`,
+`kDisplayDimRampMs`, and `kDisplaySleepDelayMs` in `src/main.cpp`, and the
+faint night brightness by `kNightDimContrast`. The vibration sensitivity is
+set by `kVibrationThresholdCounts`. Increase it if normal background
+vibration prevents dimming/sleep, or decrease it if keyboard activity does
+not restore brightness reliably.
 
 ## Changing the timezone
 
